@@ -193,7 +193,7 @@ class YouTubeController {
           await User.findByIdAndUpdate(userId, {
             $set: {
               'socialAccounts.youtube.accessToken': refreshResult.access_token,
-              'socialAccounts.youtube.refreshToken': refreshResult.refresh_token,
+              'socialAccounts.youtube.refreshToken': refreshResult.refresh_token || user.socialAccounts.youtube.refreshToken,
               'socialAccounts.youtube.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
             }
           });
@@ -202,8 +202,9 @@ class YouTubeController {
           console.log('❌ Failed to refresh YouTube token:', refreshResult.error);
           return res.status(400).json({
             success: false,
-            error: 'Failed to refresh YouTube token',
-            code: 'TOKEN_REFRESH_FAILED'
+            error: 'Failed to refresh YouTube token. Please reconnect your YouTube account.',
+            code: 'TOKEN_REFRESH_FAILED',
+            details: refreshResult.error
           });
         }
       } else {

@@ -117,6 +117,12 @@ class YouTubeService {
   // Get YouTube channel info
   async getChannelInfo(accessToken) {
     try {
+      console.log('🔍 YouTube API request - Channel info:', {
+        hasToken: !!accessToken,
+        tokenLength: accessToken?.length,
+        baseURL: this.baseURL
+      });
+
       const response = await axios.get(`${this.baseURL}/channels`, {
         params: {
           part: 'snippet,statistics',
@@ -152,12 +158,17 @@ class YouTubeService {
       }
     } catch (error) {
       const statusCode = error.response?.status;
-      console.error('YouTube channel info error:', error.response?.data || error.message);
+      const errorData = error.response?.data;
+      console.error('YouTube channel info error:', {
+        status: statusCode,
+        error: errorData,
+        message: error.message
+      });
       return {
         success: false,
-        error: error.response?.data?.error?.message || 'Failed to get channel info',
+        error: errorData?.error?.message || 'Failed to get channel info',
         statusCode,
-        raw: error.response?.data || null,
+        raw: errorData || null,
       };
     }
   }
@@ -228,7 +239,6 @@ class YouTubeService {
             timeout: 30000, // 30 seconds per chunk
             onUploadProgress: (progressEvent) => {
               if (onProgress) {
-                const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
                 const overallProgress = ((uploadedBytes + progressEvent.loaded) / totalSize) * 100;
                 onProgress(overallProgress);
               }

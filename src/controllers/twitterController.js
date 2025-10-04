@@ -131,79 +131,152 @@ class TwitterController {
   }
 
   // Post content to Twitter (Post / Thread / Poll)
-  async postContent(req, res) {
-    try {
-      const { type, content, mediaIds, thread, poll } = req.body;
-      // type = "post" | "thread" | "poll"
-      const userId = req.user.id;
-      const user = await User.findById(userId);
+// Enhanced post content method with better debugging
+async postContent(req, res) {
+  try {
+    const { type, content, mediaIds, thread, poll, reply_settings } = req.body;
+    const userId = req.user.id;
+    
+    console.log('📝 Twitter post request:', {
+      userId,
+      type,
+      contentLength: content?.length,
+      contentPreview: content?.substring(0, 50),
+      mediaCount: mediaIds?.length,
+      threadLength: thread?.length,
+      hasPoll: !!poll,
+      replySettings: reply_settings
+    });
 
-      if (!user || !user.socialAccounts?.twitter?.accessToken) {
-        return res.status(400).json({ success: false, error: 'Twitter account not connected' });
-      }
-
-      // Refresh token if expired
-      let accessToken = user.socialAccounts.twitter.accessToken;
-      if (user.socialAccounts.twitter.expiresAt < new Date()) {
-        const refreshResult = await twitterService.refreshToken(user.socialAccounts.twitter.refreshToken);
-        if (refreshResult.success) {
-          accessToken = refreshResult.access_token;
-          await User.findByIdAndUpdate(userId, {
-            $set: {
-              'socialAccounts.twitter.accessToken': refreshResult.access_token,
-              'socialAccounts.twitter.refreshToken': refreshResult.refresh_token,
-              'socialAccounts.twitter.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
-            }
-          });
-          console.log('✅ Twitter token refreshed for posting');
-        } else {
-          return res.status(400).json({ success: false, error: 'Failed to refresh Twitter token' });
-        }
-      }
-
-      let result;
-
-      // Handle different types
-      if (type === "post") {
-        // Single tweet
-        result = await twitterService.postTweet(accessToken, content, mediaIds);
-
-      } else if (type === "thread") {
-        // Thread of multiple tweets
-        if (!Array.isArray(thread) || thread.length === 0) {
-          return res.status(400).json({ success: false, error: 'Thread content required' });
-        }
-        result = await twitterService.postThread(accessToken, thread);
-
-      } else if (type === "poll") {
-        // Poll with options and duration
-        if (!poll?.options || poll.options.length < 2) {
-          return res.status(400).json({ success: false, error: 'Poll must have at least 2 options' });
-        }
-        if (!poll?.durationMinutes) {
-          return res.status(400).json({ success: false, error: 'Poll duration required' });
-        }
-        result = await twitterService.postPoll(accessToken, content, poll);
-
-      } else {
-        return res.status(400).json({ success: false, error: 'Invalid post type' });
-      }
-
-      if (!result.success) {
-        console.error('❌ Twitter post failed:', result.error);
-        return res.status(400).json({ success: false, error: result.error });
-      }
-
-      res.json({ 
-        success: true, 
-        message: 'Twitter content posted successfully', 
-        data: result 
+    const user = await User.findById(userId);
+    
+    if (!user || !user.socialAccounts?.twitter?.accessToken) {
+      console.log('❌ Twitter account not connected for user:', userId);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Twitter account not connected. Please connect your Twitter account first.' 
       });
-    } catch (error) {
-      console.error('Twitter post error:', error);
-      res.status(500).json({ success: false, error: 'Failed to post content' });
     }
+
+    // Enhanced token refresh with debugging
+    let accessToken = user.socialAccounts.twitter.accessToken;
+    const tokenExpiresAt = new Date(user.socialAccounts.twitter.expiresAt);
+    const now = new Date();
+    
+    console.log('🔑 Token status:', {
+      expiresAt: tokenExpiresAt,
+      now: now,
+      isExpired: tokenExpiresAt < now,
+      tokenPreview: accessToken ? `${accessToken.substring(0, 10)}...` : 'No token'
+    });
+
+    if (tokenExpiresAt < now) {
+      console.log('🔄 Twitter token expired, refreshing...');
+      const refreshResult = await twitterService.refreshToken(user.socialAccounts.twitter.refreshToken);
+      
+      if (refreshResult.success) {
+        accessToken = refreshResult.access_token;
+        // Update user with new token
+        await User.findByIdAndUpdate(userId, {
+          $set: {
+            'socialAccounts.twitter.accessToken': refreshResult.access_token,
+            'socialAccounts.twitter.refreshToken': refreshResult.refresh_token,
+            'socialAccounts.twitter.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
+          }
+        });
+        console.log('✅ Twitter token refreshed successfully');
+      } else {
+        console.log('❌ Failed to refresh Twitter token:', refreshResult.error);
+        return res.status(400).json({
+          success: false,
+          error: 'Failed to refresh Twitter token. Please reconnect your Twitter account.'
+        });
+      }
+    }
+
+    // Validate token can post
+    console.log('🔍 Validating Twitter token permissions...');
+    const validation = await twitterService.validateToken(accessToken);
+    if (!validation.valid || !validation.canPost) {
+      console.log('❌ Twitter token validation failed:', validation.error);
+      return res.status(400).json({
+        success: false,
+        error: validation.error || 'Twitter account cannot post. Please check permissions.'
+      });
+    }
+    console.log('✅ Twitter token validation passed');
+
+    let result;
+
+    // Handle different post types
+    if (type === "post") {
+      // Single tweet
+      console.log('🐦 Posting single tweet...');
+      result = await twitterService.postTweet(accessToken, content, mediaIds);
+
+    } else if (type === "thread") {
+      // Thread of multiple tweets
+      if (!Array.isArray(thread) || thread.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Thread must contain at least one tweet' 
+        });
+      }
+      
+      console.log('🧵 Posting thread with', thread.length, 'tweets...');
+      result = await twitterService.postThread(accessToken, thread);
+
+    } else if (type === "poll") {
+      // Poll with options and duration
+      if (!poll?.options || poll.options.length < 2) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Poll must have at least 2 options' 
+        });
+      }
+      if (!poll?.duration_minutes) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Poll duration required' 
+        });
+      }
+      
+      console.log('📊 Posting poll...', poll);
+      result = await twitterService.postPoll(accessToken, content, poll);
+
+    } else {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid post type. Use "post", "thread", or "poll"' 
+      });
+    }
+
+    console.log('📊 Twitter API result:', result);
+
+    if (!result.success) {
+      return res.status(400).json({ 
+        success: false, 
+        error: result.error,
+        details: result.raw 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Twitter content posted successfully', 
+      data: result,
+      tweet_url: `https://twitter.com/user/status/${result.tweet_id || result.thread_id}`
+    });
+    
+  } catch (error) {
+    console.error('❌ Twitter post error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to post content to Twitter',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+}
 
   // Upload Media
   async uploadMedia(req, res) {
@@ -229,6 +302,30 @@ class TwitterController {
     } catch (error) {
       console.error('Twitter media upload error:', error);
       res.status(500).json({ success: false, error: 'Failed to upload media' });
+    }
+  }
+
+  // Check media processing status
+  async checkMediaStatus(req, res) {
+    try {
+      const { mediaId } = req.params;
+      const userId = req.user.id;
+      const user = await User.findById(userId);
+
+      if (!user || !user.socialAccounts?.twitter?.accessToken) {
+        return res.status(400).json({ success: false, error: 'Twitter account not connected' });
+      }
+
+      const result = await twitterService.checkMediaStatus(user.socialAccounts.twitter.accessToken, mediaId);
+
+      if (!result.success) {
+        return res.status(400).json({ success: false, error: result.error });
+      }
+
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('Twitter media status check error:', error);
+      res.status(500).json({ success: false, error: 'Failed to check media status' });
     }
   }
 

@@ -4,7 +4,7 @@ require('dotenv').config();
 const config = {
   // Server Configuration
   NODE_ENV: process.env.NODE_ENV || 'development',
-  PORT: process.env.PORT || 5000,
+  PORT: parseInt(process.env.PORT, 10) || 5000,
   
   // Database Configuration
   MONGODB_URI: process.env.MONGODB_URI,
@@ -35,7 +35,7 @@ const config = {
   TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET,
   LINKEDIN_CLIENT_ID: process.env.LINKEDIN_CLIENT_ID,
   LINKEDIN_CLIENT_SECRET: process.env.LINKEDIN_CLIENT_SECRET,
-  LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'r_liteprofile',
+  LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'r_liteprofile,r_emailaddress',
   
   // Google OAuth
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
@@ -94,6 +94,12 @@ const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:', missingEnvVars);
   process.exit(1); // Always exit if critical env vars are missing
+}
+
+// ✅ Validate PORT is within valid range
+if (config.PORT < 0 || config.PORT > 65535) {
+  console.error('❌ Invalid PORT value:', config.PORT, '- must be between 0 and 65535');
+  process.exit(1);
 }
 
 module.exports = config;

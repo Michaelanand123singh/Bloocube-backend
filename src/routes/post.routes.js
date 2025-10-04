@@ -15,6 +15,12 @@ const postValidation = [
     .isLength({ min: 1, max: 10000 })
     .withMessage('Content must be between 1 and 10000 characters')
     .trim(),
+  body('platform')
+    .isIn(['twitter', 'youtube', 'instagram', 'linkedin', 'facebook'])
+    .withMessage('Platform must be one of: twitter, youtube, instagram, linkedin, facebook'),
+  body('post_type')
+    .isIn(['post', 'story', 'reel', 'video', 'live', 'carousel', 'poll', 'tweet', 'thread'])
+    .withMessage('Post type must be one of: post, story, reel, video, live, carousel, poll, tweet, thread'),
   body('status')
     .optional()
     .isIn(['draft', 'scheduled', 'published'])
@@ -102,6 +108,68 @@ router.delete('/:id',
   authenticate,
   idValidation,
   postController.deletePost
+);
+
+// Publish a post immediately
+router.post('/publish',
+  authenticate,
+  uploadMiddleware,
+  postValidation,
+  postController.publishPost
+);
+
+// Schedule a post for later
+router.post('/schedule',
+  authenticate,
+  uploadMiddleware,
+  [
+    ...postValidation,
+    body('scheduledAt')
+      .isISO8601()
+      .withMessage('Valid scheduled date required')
+      .custom((value) => {
+        const scheduledDate = new Date(value);
+        const now = new Date();
+        if (scheduledDate <= now) {
+          throw new Error('Scheduled date must be in the future');
+        }
+        return true;
+      })
+  ],
+  postController.schedulePost
+);
+
+// Publish an existing post by ID
+router.put('/:id/publish',
+  authenticate,
+  idValidation,
+  postController.publishPostById
+);
+
+// Schedule an existing post by ID
+router.put('/:id/schedule',
+  authenticate,
+  idValidation,
+  [
+    body('scheduledAt')
+      .isISO8601()
+      .withMessage('Valid scheduled date required')
+      .custom((value) => {
+        const scheduledDate = new Date(value);
+        const now = new Date();
+        if (scheduledDate <= now) {
+          throw new Error('Scheduled date must be in the future');
+        }
+        return true;
+      })
+  ],
+  postController.schedulePostById
+);
+
+// Test Twitter connection
+router.get('/test-twitter-connection',
+  authenticate,
+  postController.testTwitterConnection
 );
 
 // Error handling middleware

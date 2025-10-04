@@ -33,5 +33,6 @@ router.post('/post', twitterController.postContent); // Handles: post, thread, p
 
 // Media management
 router.post('/upload-media', upload.single('media'), twitterController.uploadMedia);
+router.get('/media-status/:mediaId', twitterController.checkMediaStatus);
 
 module.exports = router;
