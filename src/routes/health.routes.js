@@ -3,6 +3,11 @@ const redis = require("../config/redis");
 
 const router = express.Router();
 
+// Basic health endpoint so /api/health responds OK
+router.get("/health", (req, res) => {
+  res.json({ status: "ok", service: "backend", timestamp: Date.now() });
+});
+
 router.get("/health/redis", async (req, res) => {
   try {
     await redis.set("health-check", "ok", 10); // expires in 10s
