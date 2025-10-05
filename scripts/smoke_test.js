@@ -75,16 +75,36 @@ async function run() {
     { name: 'GET /api/admin/logs', path: '/api/admin/logs', auth: true }
   ];
   const commonEndpoints = [
-    { name: 'GET /api/campaigns', path: '/api/campaigns' },
-    { name: 'GET /api/analytics/top', path: '/api/analytics/top' }
+    { name: 'GET /api/campaigns', path: '/api/campaigns', auth: true },
+    { name: 'GET /api/analytics/top', path: '/api/analytics/top', auth: true },
+    { name: 'GET /api/analytics/platform/:platform', path: '/api/analytics/platform/twitter', auth: true }
   ];
   const creatorEndpoints = [
-    { name: 'GET /api/bids', path: '/api/bids', auth: true }
+    { name: 'GET /api/bids', path: '/api/bids', auth: true },
+    { name: 'GET /api/competitor/history', path: '/api/competitor/history', auth: true }
   ];
   const brandEndpoints = [
-    // list campaigns by brand will need brand id; skip to generic list
-    { name: 'GET /api/campaigns', path: '/api/campaigns' }
+    { name: 'GET /api/campaigns', path: '/api/campaigns', auth: true }
   ];
+
+  // Health endpoints (API mounted health routes)
+  {
+    const h = await request('GET', '/api/health');
+    results.push({ name: 'GET /api/health', ...h });
+  }
+  {
+    const hr = await request('GET', '/api/health/redis');
+    results.push({ name: 'GET /api/health/redis', ...hr });
+  }
+  {
+    const hm = await request('GET', '/api/health/mongo');
+    results.push({ name: 'GET /api/health/mongo', ...hm });
+  }
+
+  // Social/public diagnostics
+  results.push({ name: 'GET /api/twitter/callback-test', ...(await request('GET', '/api/twitter/callback-test')) });
+  results.push({ name: 'GET /api/youtube/callback-test', ...(await request('GET', '/api/youtube/callback-test')) });
+  results.push({ name: 'GET /api/linkedin/ping', ...(await request('GET', '/api/linkedin/ping')) });
 
   // Run suites
   results.push(...(await runRoleSuite('ADMIN', CREDS.admin, [...adminEndpoints, ...commonEndpoints])));
@@ -96,7 +116,7 @@ async function run() {
   console.log(lines.join('\n'));
 
   // Non-zero exit on any hard failures (status >=500) or health failing
-  const failed = results.some(r => r.status >= 500 || (r.name.startsWith('GET /api/health') && !r.ok));
+  const failed = results.some(r => r && (r.status >= 500 || ((r.name || '').startsWith('GET /api/health') && !r.ok)));
   process.exit(failed ? 1 : 0);
 }
 
