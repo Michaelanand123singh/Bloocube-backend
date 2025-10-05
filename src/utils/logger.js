@@ -88,14 +88,16 @@ logger.request = (req, res, responseTime) => {
 
 logger.error = (message, error = null, meta = {}) => {
   if (error instanceof Error) {
-    winston.createLogger().error(message, {
+    logger.log({
+      level: 'error',
+      message,
       ...meta,
       stack: error.stack,
       name: error.name,
-      message: error.message
+      errorMessage: error.message
     });
   } else {
-    winston.createLogger().error(message, { ...meta, error });
+    logger.log({ level: 'error', message, ...meta, error });
   }
 };
 

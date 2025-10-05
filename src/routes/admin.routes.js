@@ -11,6 +11,8 @@ router.get('/users', ctrl.listUsers);
 router.patch('/users/:id/toggle', ctrl.toggleUserActive);
 router.get('/campaigns', ctrl.listCampaigns);
 router.get('/logs', ctrl.getLogs);
+router.get('/settings', ctrl.getSettings);
+router.put('/settings', ctrl.updateSettings);
 
 module.exports = router;
 
