@@ -15,7 +15,7 @@ spec:
             - name: PORT
               value: "5000"
             - name: CORS_ORIGIN
-              value: "http://localhost:3000"
+              value: "http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com"
             - name: FRONTEND_URL
               value: "http://localhost:3000"
             - name: JWT_EXPIRE
