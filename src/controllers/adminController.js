@@ -127,6 +127,40 @@ const updateSettings = asyncHandler(async (req, res) => {
   }
 });
 
+// Admin create user (super admin only)
+const createUser = asyncHandler(async (req, res) => {
+  const { name, email, password, role } = req.body || {};
+  if (!name || !email || !password || !role) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, message: 'name, email, password, role are required' });
+  }
+
+  if (!['creator', 'brand', 'admin'].includes(role)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, message: 'Invalid role' });
+  }
+
+  const existing = await User.findOne({ email: email.toLowerCase() });
+  if (existing) {
+    return res.status(HTTP_STATUS.CONFLICT).json({ success: false, message: 'User already exists' });
+  }
+
+  const user = new User({ name, email: email.toLowerCase(), password, role, isActive: true });
+  await user.save();
+
+  const safeUser = await User.findById(user._id).select('-password');
+  res.status(HTTP_STATUS.CREATED).json({ success: true, data: { user: safeUser } });
+});
+
+// Admin delete user (super admin only)
+const deleteUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, message: 'User not found' });
+  }
+  await User.deleteOne({ _id: id });
+  res.json({ success: true, data: { id } });
+});
+
 module.exports = {
   dashboardStats,
   listUsers,
@@ -134,7 +168,9 @@ module.exports = {
   listCampaigns,
   getLogs,
   getSettings,
-  updateSettings
+  updateSettings,
+  createUser,
+  deleteUser
 };
 
 
