@@ -55,6 +55,12 @@ const config = {
   MAX_FILE_SIZE: process.env.MAX_FILE_SIZE || '10MB',
   UPLOAD_PATH: process.env.UPLOAD_PATH || './uploads',
   
+  // Google Cloud Storage
+  GCS_BUCKET: process.env.GCS_BUCKET,
+  GCS_PROJECT_ID: process.env.GCS_PROJECT_ID,
+  GCS_KEYFILE: process.env.GCS_KEYFILE, // optional: path to service account json
+  GCS_BASE_URL: process.env.GCS_BASE_URL || 'https://storage.googleapis.com',
+  
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS || 900000, // 15 minutes
   RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS || 100,

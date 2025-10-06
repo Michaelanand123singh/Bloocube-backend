@@ -1,3 +1,28 @@
+## GCS media storage (Option B - Default Credentials)
+
+Set these environment variables for the backend service (Cloud Run recommended):
+
+- `GCS_BUCKET=blucubemedia`
+- `GCS_PROJECT_ID=theta-spirit-473421-u3`
+- (Do not set `GCS_KEYFILE` or `GOOGLE_APPLICATION_CREDENTIALS` on Cloud Run; default credentials will be used.)
+
+Grant the Cloud Run service account access:
+
+- Role: `roles/storage.objectAdmin` on bucket `blucubemedia`.
+
+After deploy, uploaded media will be stored at:
+
+- `gs://blucubemedia/media/YYYY/MM/DD/<hash>.<ext>`
+- Public URL (if public-read): `https://storage.googleapis.com/blucubemedia/media/...`
+
+Local dev (optional):
+
+```bash
+gcloud auth application-default login
+export GCS_BUCKET=blucubemedia
+export GCS_PROJECT_ID=theta-spirit-473421-u3
+```
+
 # Bloocube Backend
 
 Node.js/Express backend for Bloocube – a social media management and AI‑driven influencer marketplace. Implements authentication, campaigns, bids, analytics, admin tooling, AI integrations, background jobs, and notifications.

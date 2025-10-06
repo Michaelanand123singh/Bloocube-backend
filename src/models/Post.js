@@ -75,6 +75,15 @@ const PostSchema = new mongoose.Schema({
       type: String,
       required: true
     },
+    storage: {
+      type: String,
+      enum: ['local', 'gcs'],
+      default: 'local'
+    },
+    storageKey: {
+      type: String,
+      required: false
+    },
     filename: {
       type: String,
       required: true

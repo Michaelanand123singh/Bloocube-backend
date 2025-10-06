@@ -44,8 +44,11 @@ const idValidation = [
     .withMessage('Invalid post ID')
 ];
 
-// Middleware to handle file uploads
-const uploadMiddleware = upload.array('media', 10);
+// Middleware to handle file uploads + persist to storage (GCS/local)
+const uploadMiddleware = [
+  upload.array('media', 10),
+  upload.persistUploads
+];
 
 // Routes
 

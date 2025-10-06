@@ -32,7 +32,7 @@ router.delete('/disconnect', twitterController.disconnect);
 router.post('/post', twitterController.postContent); // Handles: post, thread, poll
 
 // Media management
-router.post('/upload-media', upload.single('media'), twitterController.uploadMedia);
+router.post('/upload-media', upload.single('media'), upload.persistUploadSingle, twitterController.uploadMedia);
 router.get('/media-status/:mediaId', twitterController.checkMediaStatus);
 
 module.exports = router;

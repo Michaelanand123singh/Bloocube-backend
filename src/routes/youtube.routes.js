@@ -13,7 +13,7 @@ router.get('/callback', youtubeController.handleCallback);
 // Protected routes for YouTube data/actions
 router.get('/channel', authenticate, youtubeController.getChannelInfo);
 router.delete('/disconnect', authenticate, youtubeController.disconnect);
-router.post('/upload-video', authenticate, upload.single('video'), youtubeController.uploadVideo);
+router.post('/upload-video', authenticate, upload.single('video'), upload.persistUploadSingle, youtubeController.uploadVideo);
 router.get('/video/:videoId/analytics', authenticate, youtubeController.getVideoAnalytics);
 
 // Test route to verify callback is accessible
