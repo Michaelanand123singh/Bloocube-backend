@@ -17,7 +17,7 @@ spec:
             - name: CORS_ORIGIN
               value: "http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com"
             - name: FRONTEND_URL
-              value: "http://localhost:3000"
+              value: "https://bloocube.com"
             - name: JWT_EXPIRE
               value: "7d"
             - name: JWT_REFRESH_EXPIRE

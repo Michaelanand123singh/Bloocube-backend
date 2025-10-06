@@ -7,7 +7,7 @@ PORT=5000
 # Comma-separated CORS origins for backend
 CORS_ORIGIN=http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com
 # FRONTEND URL used for redirects
-FRONTEND_URL=http://localhost:3000
+FRONTEND_URL=https://bloocube.com
 # Required secrets to set on Cloud Run (set via Console or gcloud)
 # JWT_SECRET=
 # JWT_REFRESH_SECRET=
