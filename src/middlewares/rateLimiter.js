@@ -28,10 +28,11 @@ const createRedisRateLimit = (options = {}) => {
       const key = `rate_limit:${keyGenerator(req)}`;
       const now = Date.now();
       const window = Math.floor(now / windowMs);
+      const windowKey = `${key}:${window}`;
 
       // Get current count from Redis
-      const currentCount = await redis.get(`${key}:${window}`);
-      const count = currentCount ? parseInt(currentCount) : 0;
+      let currentCount = await redis.get(windowKey);
+      let count = currentCount ? parseInt(currentCount) : 0;
 
       if (count >= max) {
         logger.warn('Rate limit exceeded', {
@@ -50,15 +51,34 @@ const createRedisRateLimit = (options = {}) => {
         });
       }
 
-      // Increment counter
-      await redis.set(`${key}:${window}`, count + 1, Math.ceil(windowMs / 1000));
+      // Increment counter atomically and ensure expiry on first hit
+      // If INCR returns 1, set expiry to window seconds
+      const newCount = await redis.incr(windowKey);
+      count = typeof newCount === 'number' ? newCount : count + 1;
+      if (count === 1) {
+        await redis.set(windowKey, String(count), Math.ceil(windowMs / 1000));
+      }
 
       // Add rate limit headers
       res.set({
         'X-RateLimit-Limit': max,
-        'X-RateLimit-Remaining': Math.max(0, max - count - 1),
+        'X-RateLimit-Remaining': Math.max(0, max - count),
         'X-RateLimit-Reset': new Date(now + windowMs).toISOString()
       });
+
+      // Optionally reverse the increment depending on outcome
+      if (skipSuccessfulRequests || skipFailedRequests) {
+        res.once('finish', async () => {
+          try {
+            const wasSuccessful = res.statusCode < 400;
+            if ((skipSuccessfulRequests && wasSuccessful) || (skipFailedRequests && !wasSuccessful)) {
+              await redis.decr(windowKey);
+            }
+          } catch (e) {
+            logger.error('Rate limiter post-response adjustment failed', e);
+          }
+        });
+      }
 
       next();
     } catch (error) {
@@ -133,6 +153,15 @@ const createMemoryRateLimit = (options = {}) => {
       'X-RateLimit-Remaining': Math.max(0, max - entry.count),
       'X-RateLimit-Reset': new Date(now + windowMs).toISOString()
     });
+
+    if (skipSuccessfulRequests || skipFailedRequests) {
+      res.once('finish', () => {
+        const wasSuccessful = res.statusCode < 400;
+        if ((skipSuccessfulRequests && wasSuccessful) || (skipFailedRequests && !wasSuccessful)) {
+          entry.count = Math.max(0, entry.count - 1);
+        }
+      });
+    }
 
     next();
   };

@@ -76,6 +76,26 @@ class RedisClient {
     }
   }
 
+  async incr(key) {
+    if (!this.isConnected) return null;
+    try {
+      return await this.client.incr(key);
+    } catch (err) {
+      console.log('Redis INCR error:', err.message);
+      return null;
+    }
+  }
+
+  async decr(key) {
+    if (!this.isConnected) return null;
+    try {
+      return await this.client.decr(key);
+    } catch (err) {
+      console.log('Redis DECR error:', err.message);
+      return null;
+    }
+  }
+
   async del(key) {
     if (!this.isConnected) return false;
     try {
