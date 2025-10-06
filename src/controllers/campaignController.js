@@ -270,7 +270,8 @@ const getCampaignBids = asyncHandler(async (req, res) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const bids = await Bid.find(filter)
-    .populate('creator_id', 'name email profile')
+    .populate('creator_id', 'name email profile socialAccounts')
+    .populate('campaign_id', 'title requirements')
     .sort(sort)
     .skip(skip)
     .limit(parseInt(limit));

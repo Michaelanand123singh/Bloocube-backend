@@ -161,15 +161,9 @@ async postToTwitter(post, user) {
           const fs = require('fs');
           const path = require('path');
           
-          // Read the media file (GCS or local)
-          let mediaBuffer;
-          if (mediaFile.storage === 'gcs' && mediaFile.storageKey) {
-            const { downloadToBufferFromGcs } = require('../utils/storage');
-            mediaBuffer = await downloadToBufferFromGcs(mediaFile.storageKey);
-          } else {
-            const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-            mediaBuffer = fs.readFileSync(mediaPath);
-          }
+          // Read the media file
+          const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
+          const mediaBuffer = fs.readFileSync(mediaPath);
           
           console.log(`📤 Uploading ${mediaFile.filename} (${mediaFile.mimeType})`);
           const uploadResult = await twitterService.uploadMedia(accessToken, mediaBuffer, mediaFile.mimeType);
@@ -648,7 +642,7 @@ async postToTwitter(post, user) {
       } = req.body;
 
       // Force status to 'draft' for regular post creation
-      // Posts should be published via the publish endpoint
+      // Posts should be ed via the publish endpoint
       const postStatus = 'draft';
 
       // Parse JSON strings if they exist
@@ -680,15 +674,13 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Process uploaded media files (now supports GCS)
+      // Process uploaded media files
       const mediaFiles = [];
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
+      if (req.body.media && req.body.media.length > 0) {
+        for (const file of req.body.media) {
           const mediaItem = {
             type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: file.url || `/uploads/${file.filename}`,
-            storage: file.storage || 'local',
-            storageKey: file.storageKey || `uploads/${file.filename}`,
+            url: `/uploads/${file.filename}`,
             filename: file.filename,
             size: file.size,
             mimeType: file.mimetype
@@ -1035,9 +1027,7 @@ async postToTwitter(post, user) {
         for (const file of req.files) {
           const mediaItem = {
             type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: file.url || `/uploads/${file.filename}`,
-            storage: file.storage || 'local',
-            storageKey: file.storageKey || `uploads/${file.filename}`,
+            url: `/uploads/${file.filename}`,
             filename: file.filename,
             size: file.size,
             mimeType: file.mimetype
@@ -1179,9 +1169,7 @@ async postToTwitter(post, user) {
         for (const file of req.files) {
           const mediaItem = {
             type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: file.url || `/uploads/${file.filename}`,
-            storage: file.storage || 'local',
-            storageKey: file.storageKey || `uploads/${file.filename}`,
+            url: `/uploads/${file.filename}`,
             filename: file.filename,
             size: file.size,
             mimeType: file.mimetype
