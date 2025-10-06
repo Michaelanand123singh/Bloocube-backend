@@ -760,19 +760,26 @@ async postToTwitter(post, user) {
     }
   }
 
-  // Get user's posts
+  // Get posts (user's posts; admins can view all)
   async getUserPosts(req, res) {
     try {
       const {
         page = 1,
         limit = 10,
         status,
-        search
+        search,
+        platform,
+        sort = '-createdAt'
       } = req.query;
 
-      const query = { author: req.user._id };
+      const query = {};
+      // Scope by author for non-admins
+      if (req.user?.role !== 'admin') {
+        query.author = req.user._id;
+      }
 
       if (status) query.status = status;
+      if (platform) query.platform = platform;
       if (search) {
         query.$or = [
           { title: { $regex: search, $options: 'i' } },
@@ -786,10 +793,10 @@ async postToTwitter(post, user) {
 
       const [posts, total] = await Promise.all([
         Post.find(query)
-          .sort({ lastEditedAt: -1, createdAt: -1 })
+          .sort(sort === 'recent' ? { createdAt: -1 } : sort === 'published' ? { publishedAt: -1 } : { lastEditedAt: -1, createdAt: -1 })
           .skip(skip)
           .limit(limitNum)
-          .populate('author', 'username email'),
+          .populate('author', 'name email role'),
         Post.countDocuments(query)
       ]);
 
@@ -813,15 +820,16 @@ async postToTwitter(post, user) {
     }
   }
 
-  // Get a specific post
+  // Get a specific post (admins can access any post)
   async getPost(req, res) {
     try {
       const { id } = req.params;
       
-      const post = await Post.findOne({
-        _id: id,
-        author: req.user._id
-      }).populate('author', 'username email');
+      const baseQuery = { _id: id };
+      if (req.user?.role !== 'admin') {
+        baseQuery.author = req.user._id;
+      }
+      const post = await Post.findOne(baseQuery).populate('author', 'name email role');
 
       if (!post) {
         return res.status(404).json({

@@ -51,6 +51,26 @@ const listCampaigns = asyncHandler(async (req, res) => {
 const getLogs = asyncHandler(async (req, res) => {
   // Read the last N entries from log files (combined + error)
   const limit = Math.max(0, Math.min(parseInt(req.query.limit || '200', 10), 1000));
+  const levelFilter = (req.query.level || '').toString().toLowerCase();
+  const serviceFilter = (req.query.service || '').toString().toLowerCase();
+  const matchesService = (item) => {
+    if (!serviceFilter) return true;
+    const svc = (item.service || '').toString().toLowerCase();
+    const type = (item.type || '').toString().toLowerCase();
+    const msg = (item.message || '').toString().toLowerCase();
+    if (svc.includes(serviceFilter)) return true;
+    // Service aliases -> type/message patterns
+    const aliases = {
+      api: (t, m) => t === 'api' || m.includes('api:'),
+      authentication: (t, m) => t === 'security' || m.includes('/api/auth') || m.includes('auth'),
+      social: (t, m) => ['twitter','youtube','linkedin','instagram','facebook','social'].some(k => svc.includes(k) || m.includes(k)),
+      email: (t, m) => svc.includes('email') || m.includes('email'),
+      database: (t, m) => t === 'database' || m.includes('database:')
+    };
+    const fn = aliases[serviceFilter];
+    if (fn) return fn(type, msg);
+    return false;
+  };
   const logsDir = path.join(process.cwd(), 'logs');
   const files = [
     path.join(logsDir, 'error.log'),
@@ -66,21 +86,28 @@ const getLogs = asyncHandler(async (req, res) => {
       for (const line of lines.slice(-limit)) {
         try {
           const parsed = JSON.parse(line);
-          entries.push({
+          const item = {
             timestamp: parsed.timestamp || new Date().toISOString(),
             level: parsed.level || 'info',
             message: parsed.message || '',
             service: parsed.service,
             error: parsed.stack || parsed.error,
             metadata: parsed
-          });
+          };
+          // Apply filters if provided
+          if (levelFilter && (item.level || '').toLowerCase() !== levelFilter) continue;
+          if (!matchesService(item)) continue;
+          entries.push(item);
         } catch (_) {
           // Non-JSON line from pretty Print, fallback to text
-          entries.push({
+          const item = {
             timestamp: new Date().toISOString(),
             level: file.endsWith('error.log') ? 'error' : 'info',
             message: line
-          });
+          };
+          if (levelFilter && (item.level || '').toLowerCase() !== levelFilter) continue;
+          if (!matchesService(item)) continue;
+          entries.push(item);
         }
       }
     } catch (e) {
