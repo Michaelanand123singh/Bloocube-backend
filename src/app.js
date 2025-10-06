@@ -38,8 +38,13 @@ console.log('Allowed CORS origins:', allowedOrigins);
 app.use(cors({
   origin: (origin, callback) => {
     console.log('CORS request from origin:', origin);
+    console.log('Current allowed origins:', allowedOrigins);
+    
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log('No origin provided, allowing request');
+      return callback(null, true);
+    }
     
     // Check if origin is in allowed list
     if (allowedOrigins.includes(origin)) {
@@ -47,12 +52,29 @@ app.use(cors({
       return callback(null, true);
     }
     
+    // Additional check for subdomains
+    const isSubdomain = allowedOrigins.some(allowedOrigin => {
+      if (allowedOrigin.startsWith('https://') && origin.startsWith('https://')) {
+        const allowedDomain = allowedOrigin.replace('https://', '');
+        const requestDomain = origin.replace('https://', '');
+        return requestDomain === allowedDomain || requestDomain.endsWith('.' + allowedDomain);
+      }
+      return false;
+    });
+    
+    if (isSubdomain) {
+      console.log('Origin allowed as subdomain:', origin);
+      return callback(null, true);
+    }
+    
     console.log('Origin rejected:', origin, 'Allowed origins:', allowedOrigins);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -76,6 +98,11 @@ app.get("/cors-test", (req, res) => {
     corsOrigin: config.CORS_ORIGIN,
     timestamp: Date.now() 
   });
+});
+
+// Simple CORS test for preflight
+app.options("/cors-test", (req, res) => {
+  res.json({ status: "ok", message: "CORS preflight successful" });
 });
 
 // API routes
