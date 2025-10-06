@@ -1,0 +1,1 @@
+CORS_ORIGIN: "http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com"

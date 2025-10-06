@@ -30,7 +30,7 @@ const app = express();
 // Middlewares
 app.use(helmet());
 // Support multiple allowed origins via comma-separated CORS_ORIGIN
-const corsOrigin = config.CORS_ORIGIN || 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com';
+const corsOrigin = config.CORS_ORIGIN || 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com';
 const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
 console.log('CORS_ORIGIN from config:', config.CORS_ORIGIN);
 console.log('Allowed CORS origins:', allowedOrigins);
