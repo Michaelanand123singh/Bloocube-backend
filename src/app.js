@@ -30,16 +30,29 @@ const app = express();
 // Middlewares
 app.use(helmet());
 // Support multiple allowed origins via comma-separated CORS_ORIGIN
-const allowedOrigins = (config.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+const corsOrigin = config.CORS_ORIGIN || 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com';
+const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
+console.log('CORS_ORIGIN from config:', config.CORS_ORIGIN);
+console.log('Allowed CORS origins:', allowedOrigins);
+
 app.use(cors({
   origin: (origin, callback) => {
+    console.log('CORS request from origin:', origin);
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      console.log('Origin allowed:', origin);
       return callback(null, true);
     }
+    
+    console.log('Origin rejected:', origin, 'Allowed origins:', allowedOrigins);
     return callback(new Error('Not allowed by CORS'));
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -52,6 +65,17 @@ app.use(generalLimiter);
 // Healthcheck
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "backend", timestamp: Date.now() });
+});
+
+// CORS test endpoint
+app.get("/cors-test", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    origin: req.headers.origin,
+    allowedOrigins: allowedOrigins,
+    corsOrigin: config.CORS_ORIGIN,
+    timestamp: Date.now() 
+  });
 });
 
 // API routes
