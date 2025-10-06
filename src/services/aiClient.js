@@ -1,15 +1,24 @@
 // src/services/aiClient.js
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
+const keepAliveHttp = new http.Agent({ keepAlive: true, maxSockets: 100 });
+const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 100 });
+
 const client = axios.create({
-  baseURL: config.AI_SERVICE_URL || 'http://localhost:8001',
-  timeout: 30000, // Increased timeout for AI processing
+  baseURL: config.AI_SERVICE_URL ,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
-    'x-api-key': config.AI_SERVICE_API_KEY || 'default-dev-key'
-  }
+    'Accept-Encoding': 'gzip, deflate, br',
+    'x-api-key': config.AI_SERVICE_API_KEY 
+  },
+  httpAgent: keepAliveHttp,
+  httpsAgent: keepAliveHttps,
+  maxRedirects: 3,
 });
 
 const handle = async (method, url, data) => {
