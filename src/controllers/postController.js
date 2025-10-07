@@ -131,7 +131,7 @@ async postToTwitter(post, user) {
     
     console.log('📝 Twitter content extraction:', {
       postType: post.post_type,
-      twitterContent,
+      twitterContent: twitterContent,
       originalContent: post.content
     });
 

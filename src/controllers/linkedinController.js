@@ -257,6 +257,62 @@ class LinkedInController {
       });
     }
   }
+
+  /**
+   * Get LinkedIn Profile
+   * @route GET /api/linkedin/profile
+   */
+  async getProfile(req, res) {
+    try {
+      const userId = req.userId || req.user?._id || req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: 'User not authenticated'
+        });
+      }
+
+      const user = await User.findById(userId).select('socialAccounts.linkedin');
+
+      if (!user || !user.socialAccounts?.linkedin?.accessToken) {
+        return res.status(400).json({
+          success: false,
+          error: 'LinkedIn account not connected'
+        });
+      }
+
+      const accessToken = user.socialAccounts.linkedin.accessToken;
+
+      // Fetch latest profile from LinkedIn
+      const profileResult = await linkedinService.getUserProfile(accessToken);
+
+      if (!profileResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: profileResult.error || 'Failed to fetch LinkedIn profile'
+        });
+      }
+
+      // Optionally augment with stored metadata
+      const connectedAt = user.socialAccounts.linkedin.connectedAt;
+
+      return res.json({
+        success: true,
+        profile: {
+          ...profileResult.user,
+          connectedAt
+        }
+      });
+    } catch (error) {
+      console.error('Error getting LinkedIn profile:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get LinkedIn profile',
+        details: error.message
+      });
+    }
+  }
 }
 
 module.exports = new LinkedInController();

@@ -33,12 +33,11 @@ app.use(helmet());
 const corsOrigin = config.CORS_ORIGIN || 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com';
 const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
 console.log('CORS_ORIGIN from config:', config.CORS_ORIGIN);
-console.log('Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: (origin, callback) => {
     console.log('CORS request from origin:', origin);
-    console.log('Current allowed origins:', allowedOrigins);
+  
     
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
@@ -88,6 +87,9 @@ app.use(generalLimiter);
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "backend", timestamp: Date.now() });
 });
+
+// Serve uploaded files statically
+app.use('/uploads', express.static('uploads'));
 
 // CORS test endpoint
 app.get("/cors-test", (req, res) => {

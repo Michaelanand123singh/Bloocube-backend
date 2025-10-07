@@ -7,6 +7,13 @@ router.post('/auth-url', authenticate, controller.generateAuthURL);
 router.get('/auth-url', authenticate, controller.generateAuthURL);
 router.get('/callback', controller.handleCallback);
 
+// Connection status and profile
+router.get('/status', authenticate, controller.getStatus);
+router.get('/profile', authenticate, controller.getProfile);
+
+// Disconnect LinkedIn account
+router.delete('/disconnect', authenticate, controller.disconnect);
+
 // Debug endpoints
 router.get('/ping', (req, res) => res.json({ ok: true }));
 router.get('/config', (req, res) => {

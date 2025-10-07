@@ -56,13 +56,24 @@ async function persistUploads(req, res, next) {
       const datePrefix = `${today.getFullYear()}/${(today.getMonth()+1).toString().padStart(2,'0')}/${today.getDate().toString().padStart(2,'0')}`;
 
       if (isGcsEnabled()) {
-        const gcsKey = `media/${datePrefix}/${hashedName}`;
-        const { key, url } = await uploadBufferToGcs(file.buffer, gcsKey, file.mimetype);
-        // Attach storage info for downstream controllers
-        file.storage = 'gcs';
-        file.storageKey = key;
-        file.url = url;
-        file.filename = hashedName; // keep a normalized filename reference
+        try {
+          const gcsKey = `media/${datePrefix}/${hashedName}`;
+          const { key, url } = await uploadBufferToGcs(file.buffer, gcsKey, file.mimetype);
+          // Attach storage info for downstream controllers
+          file.storage = 'gcs';
+          file.storageKey = key;
+          file.url = url;
+          file.filename = hashedName; // keep a normalized filename reference
+        } catch (gcsError) {
+          console.warn('⚠️ GCS upload failed, falling back to local storage:', gcsError.message);
+          // Fallback to local storage
+          const destPath = path.join(uploadDir, hashedName);
+          fs.writeFileSync(destPath, file.buffer);
+          file.storage = 'local';
+          file.storageKey = `uploads/${hashedName}`;
+          file.url = `/uploads/${hashedName}`;
+          file.filename = hashedName;
+        }
       } else {
         const destPath = path.join(uploadDir, hashedName);
         fs.writeFileSync(destPath, file.buffer);
