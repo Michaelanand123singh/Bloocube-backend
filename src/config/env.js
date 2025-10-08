@@ -35,7 +35,7 @@ const config = {
   TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET,
   LINKEDIN_CLIENT_ID: process.env.LINKEDIN_CLIENT_ID,
   LINKEDIN_CLIENT_SECRET: process.env.LINKEDIN_CLIENT_SECRET,
-  LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'r_liteprofile,r_emailaddress',
+  LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'openid profile email w_member_social',
   
   // Google OAuth
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,

@@ -62,7 +62,37 @@ class LinkedInController {
       });
     }
   }
+  async saveConnection(req, res) {
+    try {
+      const userId = req.userId; // From your 'authenticate' middleware
+      const linkedInData = req.body;
 
+      // Update user's LinkedIn account in database
+      const updateData = {
+        'socialAccounts.linkedin': {
+          id: linkedInData.id,
+          email: linkedInData.email,
+          firstName: linkedInData.firstName,
+          lastName: linkedInData.lastName,
+          name: `${linkedInData.firstName} ${linkedInData.lastName}`.trim(),
+          accessToken: linkedInData.accessToken,
+          refreshToken: linkedInData.refreshToken,
+          expiresAt: linkedInData.expiresAt,
+          connectedAt: linkedInData.connectedAt,
+          isActive: true
+        }
+      };
+
+      await User.findByIdAndUpdate(userId, { $set: updateData }, { new: true });
+
+      console.log(`✅ LinkedIn account saved for user: ${userId}`);
+      res.json({ success: true, message: 'LinkedIn connection saved.' });
+
+    } catch (error) {
+      console.error('❌ Error in saveConnection:', error);
+      res.status(500).json({ success: false, error: 'Failed to save connection' });
+    }
+  }
   /**
    * Handle LinkedIn OAuth Callback
    * @route GET /api/auth/linkedin/callback
@@ -262,57 +292,34 @@ class LinkedInController {
    * Get LinkedIn Profile
    * @route GET /api/linkedin/profile
    */
-  async getProfile(req, res) {
-    try {
-      const userId = req.userId || req.user?._id || req.user?.id;
+ // src/controllers/linkedinController.js
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated'
-        });
-      }
+ async getProfile(req, res) {
+  try {
+    const userId = req.userId;
+    const user = await User.findById(userId).select('socialAccounts.linkedin');
 
-      const user = await User.findById(userId).select('socialAccounts.linkedin');
-
-      if (!user || !user.socialAccounts?.linkedin?.accessToken) {
-        return res.status(400).json({
-          success: false,
-          error: 'LinkedIn account not connected'
-        });
-      }
-
-      const accessToken = user.socialAccounts.linkedin.accessToken;
-
-      // Fetch latest profile from LinkedIn
-      const profileResult = await linkedinService.getUserProfile(accessToken);
-
-      if (!profileResult.success) {
-        return res.status(400).json({
-          success: false,
-          error: profileResult.error || 'Failed to fetch LinkedIn profile'
-        });
-      }
-
-      // Optionally augment with stored metadata
-      const connectedAt = user.socialAccounts.linkedin.connectedAt;
-
-      return res.json({
-        success: true,
-        profile: {
-          ...profileResult.user,
-          connectedAt
-        }
-      });
-    } catch (error) {
-      console.error('Error getting LinkedIn profile:', error);
-      res.status(500).json({
+    if (!user || !user.socialAccounts?.linkedin?.accessToken) {
+      return res.status(400).json({
         success: false,
-        error: 'Failed to get LinkedIn profile',
-        details: error.message
+        error: 'LinkedIn account not connected'
       });
     }
+
+    // ✅ Just return the saved profile data, like you do for Twitter
+    return res.json({
+      success: true,
+      profile: user.socialAccounts.linkedin
+    });
+
+  } catch (error) {
+    console.error('Error getting LinkedIn profile:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get LinkedIn profile'
+    });
   }
+}
 }
 
 module.exports = new LinkedInController();

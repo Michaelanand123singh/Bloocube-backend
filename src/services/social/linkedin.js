@@ -63,50 +63,35 @@ class LinkedInService {
     }
   }
 
+  // src/services/social/linkedin.js
+
   async getUserProfile(accessToken) {
     try {
-      console.log('🔍 Fetching LinkedIn profile...');
+      console.log('🔍 Fetching LinkedIn profile with OIDC endpoint...');
       
-      // Basic profile - using the correct v2 endpoint
-      const me = await axios.get(`${this.apiBase}/me`, {
+      // Use the modern OpenID Connect /userinfo endpoint
+      const response = await axios.get(`${this.apiBase}/userinfo`, {
         headers: { 
-          Authorization: `Bearer ${accessToken}`,
-          'X-Restli-Protocol-Version': '2.0.0'
+          Authorization: `Bearer ${accessToken}`
         }
       });
       
-      console.log('✅ Basic profile fetched:', me.data);
+      const userInfo = response.data;
+      console.log('✅ Profile fetched:', userInfo);
 
-      // Try to get email - this might fail if scope is not granted
-      let email = null;
-      try {
-        const emailRes = await axios.get(
-          `${this.apiBase}/emailAddress?q=members&projection=(elements*(handle~))`,
-          { 
-            headers: { 
-              Authorization: `Bearer ${accessToken}`,
-              'X-Restli-Protocol-Version': '2.0.0'
-            } 
-          }
-        );
-        email = emailRes.data?.elements?.[0]?.['handle~']?.emailAddress;
-        console.log('✅ Email fetched:', email);
-      } catch (emailError) {
-        console.warn('⚠️ Email fetch failed (scope issue?):', emailError.response?.data || emailError.message);
-        // Don't fail the whole process if email fails
-      }
-
+      // Map the new fields to your application's format
       const profile = {
-        id: me.data.id,
-        firstName: me.data.localizedFirstName,
-        lastName: me.data.localizedLastName,
-        name: `${me.data.localizedFirstName} ${me.data.localizedLastName}`,
-        email: email,
-        picture: me.data.profilePicture?.displayImage || null
+        id: userInfo.sub, // 'sub' is the unique ID in OIDC
+        firstName: userInfo.given_name,
+        lastName: userInfo.family_name,
+        name: userInfo.name,
+        email: userInfo.email,
+        picture: userInfo.picture
       };
 
       console.log('✅ Profile constructed:', profile);
       return { success: true, user: profile };
+
     } catch (error) {
       const detail = error.response?.data || error.message;
       console.error('❌ LinkedIn profile error:', detail);

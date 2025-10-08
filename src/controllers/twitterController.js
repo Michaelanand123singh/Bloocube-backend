@@ -345,6 +345,8 @@ async postContent(req, res) {
       res.status(500).json({ success: false, error: 'Failed to get Twitter profile' });
     }
   }
+ 
+
 
   // Validate Twitter connection
   async validateConnection(req, res) {

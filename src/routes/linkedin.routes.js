@@ -6,6 +6,8 @@ const controller = require('../controllers/linkedinController');
 router.post('/auth-url', authenticate, controller.generateAuthURL);
 router.get('/auth-url', authenticate, controller.generateAuthURL);
 router.get('/callback', controller.handleCallback);
+router.post('/save-connection', authenticate, controller.saveConnection);
+
 
 // Connection status and profile
 router.get('/status', authenticate, controller.getStatus);
