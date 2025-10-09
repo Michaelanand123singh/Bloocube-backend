@@ -29,6 +29,7 @@ const config = {
   // Social Media API Keys
   INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID,
   INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET,
+  INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'user_profile,user_media',
   FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
   FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET,
   TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID,
