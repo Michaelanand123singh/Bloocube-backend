@@ -3,11 +3,13 @@ const express = require('express');
 const router = express.Router();
 const twitterController = require('../controllers/twitterController');
 const { authenticate } = require('../middlewares/auth');
-const upload = require('../middlewares/upload');
+const { upload, persistUploads } = require('../middlewares/upload');
 
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
-router.post('/auth-url', authenticate, twitterController.generateAuthURL); // POST preferred for auth URL
+router.get('/auth-url', authenticate, twitterController.generateAuthURL);
+
+// router.post('/auth-url', authenticate, twitterController.generateAuthURL); // POST preferred for auth URL
 router.get('/callback', twitterController.handleCallback);
 
 // Test route
@@ -32,7 +34,7 @@ router.delete('/disconnect', twitterController.disconnect);
 router.post('/post', twitterController.postContent); // Handles: post, thread, poll
 
 // Media management
-router.post('/upload-media', upload.single('media'), upload.persistUploadSingle, twitterController.uploadMedia);
+router.post('/upload-media', upload.single('media'), persistUploads, twitterController.uploadMedia);
 router.get('/media-status/:mediaId', twitterController.checkMediaStatus);
 
 module.exports = router;

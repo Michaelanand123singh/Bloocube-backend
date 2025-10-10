@@ -2,9 +2,8 @@ const express = require('express');
 const router = express.Router();
 const postController = require('../controllers/postController');
 const { authenticate } = require('../middlewares/auth');
-const upload = require('../middlewares/upload');
 const { body, query, param } = require('express-validator');
-
+const { upload, persistUploads } = require('../middlewares/upload');
 // Validation rules
 const postValidation = [
   body('title')
@@ -46,8 +45,8 @@ const idValidation = [
 
 // Middleware to handle file uploads + persist to storage (GCS/local)
 const uploadMiddleware = [
-  upload.array('media', 10),
-  upload.persistUploads
+  upload.array('media', 10), // This is the multer function
+  persistUploads             // This is your custom persistence function
 ];
 
 // Routes

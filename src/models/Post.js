@@ -1,28 +1,40 @@
 const mongoose = require('mongoose');
 
+// Helper object for custom validation
+const validPostTypes = {
+  twitter: ['tweet', 'thread', 'poll'],
+  youtube: ['video', 'live', 'post'],
+  instagram: ['post', 'story', 'reel', 'carousel'],
+  linkedin: ['post', 'video', 'poll'],
+  facebook: ['post', 'story', 'reel', 'video', 'live', 'carousel']
+};
+
 const PostSchema = new mongoose.Schema({
   title: {
     type: String,
-    required: false,
     trim: true,
     maxlength: 200
   },
   content: {
     type: mongoose.Schema.Types.Mixed,
-    required: false,
     default: {}
   },
   platform: {
     type: String,
     required: true,
-    enum: ['twitter', 'youtube', 'instagram', 'linkedin', 'facebook'],
-    index: true
+    enum: Object.keys(validPostTypes)
   },
   post_type: {
     type: String,
     required: true,
-    enum: ['post', 'story', 'reel', 'video', 'live', 'carousel', 'poll', 'tweet', 'thread'],
-    default: 'post'
+    // ✅ IMPROVEMENT: Add a custom validator to check for valid platform/post_type combinations
+    validate: {
+      validator: function(value) {
+        // 'this' refers to the document being validated
+        return validPostTypes[this.platform]?.includes(value);
+      },
+      message: props => `${props.value} is not a valid post_type for the platform ${props.path}`
+    }
   },
   author: {
     type: mongoose.Schema.Types.ObjectId,
@@ -36,26 +48,15 @@ const PostSchema = new mongoose.Schema({
     default: 'draft',
     index: true
   },
-  scheduledAt: {
-    type: Date,
-    required: false
-  },
-  publishedAt: {
-    type: Date,
-    required: false
-  },
+  // ❌ REMOVED: Redundant fields are removed. Data now lives in the 'publishing' and 'scheduling' objects.
+  // scheduledAt: Date,
+  // publishedAt: Date,
+  // platform_post_id: String,
+  // platform_url: String,
+
   platformContent: {
     type: mongoose.Schema.Types.Mixed,
-    required: false,
     default: {}
-  },
-  platform_post_id: {
-    type: String,
-    required: false
-  },
-  platform_url: {
-    type: String,
-    required: false
   },
   tags: [{
     type: String,
@@ -80,10 +81,7 @@ const PostSchema = new mongoose.Schema({
       enum: ['local', 'gcs'],
       default: 'local'
     },
-    storageKey: {
-      type: String,
-      required: false
-    },
+    storageKey: String,
     filename: {
       type: String,
       required: true
@@ -96,10 +94,7 @@ const PostSchema = new mongoose.Schema({
       type: String,
       required: true
     },
-    thumbnail: {
-      type: String,
-      required: false
-    }
+    thumbnail: String
   }],
   analytics: {
     views: { type: Number, default: 0 },
@@ -107,16 +102,19 @@ const PostSchema = new mongoose.Schema({
     shares: { type: Number, default: 0 },
     comments: { type: Number, default: 0 },
     clicks: { type: Number, default: 0 },
-    lastUpdated: { type: Date, default: Date.now }
+    lastUpdated: Date
   },
+  // ✅ IMPROVEMENT: Centralized publishing information
   publishing: {
     published_at: Date,
     platform_post_id: String,
+    platform_url: String, // Added URL here for completeness
     error: String,
     retry_count: { type: Number, default: 0 }
   },
+  // ✅ IMPROVEMENT: Centralized scheduling information
   scheduling: {
-    scheduled_for: Date,
+    scheduled_at: Date, // Renamed for consistency
     timezone: String,
     recurring: {
       enabled: { type: Boolean, default: false },
@@ -131,53 +129,30 @@ const PostSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
+
 // Indexes for better query performance
 PostSchema.index({ author: 1, status: 1 });
-PostSchema.index({ platform: 1, status: 1 });
-PostSchema.index({ scheduledAt: 1 });
+PostSchema.index({ 'scheduling.scheduled_at': 1, status: 1 }); // Updated index
 PostSchema.index({ createdAt: -1 });
 
-// Virtual for checking if post can be published
-PostSchema.methods.canPublish = function() {
-  return this.status === 'draft' || this.status === 'scheduled';
-};
-
-// Virtual for checking if post is scheduled
-PostSchema.methods.isScheduled = function() {
-  return this.status === 'scheduled' && this.scheduledAt && this.scheduledAt > new Date();
-};
-
-// Virtual for getting post age
-PostSchema.virtual('age').get(function() {
-  return Date.now() - this.createdAt.getTime();
-});
 
 // Pre-save middleware
 PostSchema.pre('save', function(next) {
-  // Update publishedAt when status changes to published
-  if (this.isModified('status') && this.status === 'published' && !this.publishedAt) {
-    this.publishedAt = new Date();
+  // ✅ IMPROVEMENT: Logic updated to use the consolidated fields
+  if (this.isModified('status') && this.status === 'published' && !this.publishing.published_at) {
+    this.publishing.published_at = new Date();
   }
-  
-  // Update scheduledAt when status changes to scheduled
-  if (this.isModified('status') && this.status === 'scheduled' && this.scheduling?.scheduled_for) {
-    this.scheduledAt = this.scheduling.scheduled_for;
-  }
-  
   next();
 });
 
-// Static method to find posts by platform and status
-PostSchema.statics.findByPlatformAndStatus = function(platform, status) {
-  return this.find({ platform, status }).populate('author', 'username email');
-};
-
-// Static method to find scheduled posts ready for publishing
+// Static method to find posts ready for publishing
 PostSchema.statics.findReadyForPublishing = function() {
+  // ✅ IMPROVEMENT: Query updated to use the consolidated field
   return this.find({
     status: 'scheduled',
-    scheduledAt: { $lte: new Date() }
+    'scheduling.scheduled_at': { $lte: new Date() }
   }).populate('author', 'username email socialAccounts');
 };
+
 
 module.exports = mongoose.model('Post', PostSchema);

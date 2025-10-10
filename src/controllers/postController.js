@@ -2,6 +2,10 @@ const Post = require('../models/Post');
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
 const path = require('path');
+const fs = require('fs'); // Must be imported for the local storage fallback
+const { TwitterApi } = require('twitter-api-v2'); 
+const { downloadToBufferFromGcs } = require('../utils/storage'); // <--- CRITICAL IMPORT
+const config = require('../config/env');
 
 // Import platform services
 const twitterService = require('../services/social/twitter');
@@ -9,7 +13,7 @@ const youtubeService = require('../services/social/youtube');
 const linkedinService = require('../services/social/linkedin');
 
 class PostController {
-  
+
   constructor() {
     // Bind methods to ensure 'this' context is preserved
     this.postToPlatform = this.postToPlatform.bind(this);
@@ -20,8 +24,10 @@ class PostController {
     this.publishPost = this.publishPost.bind(this);
     this.schedulePostById = this.schedulePostById.bind(this);
     this.schedulePost = this.schedulePost.bind(this);
+    // REMOVED: this.processUploadedMedia = this.processUploadedMedia.bind(this); // This is no longer needed
+    this.createPost = this.createPost.bind(this); // Already correctly bound
   }
-  
+
   // Helper method to post to platform
   async postToPlatform(post, user) {
     try {
@@ -71,350 +77,71 @@ class PostController {
       };
     }
   }
+
   // Enhanced Twitter posting with proper data extraction
+// In src/controllers/postController.js
+
+// In src/controllers/postController.js
+
 async postToTwitter(post, user) {
   try {
-    console.log('🐦 Starting Twitter posting process:', {
-      postId: post._id,
-      postType: post.post_type,
-      platformContent: post.platform_content?.twitter,
-      hasPollData: !!post.platform_content?.twitter?.poll,
-      hasThreadData: !!post.platform_content?.twitter?.thread
-    });
-
-    if (!user.socialAccounts?.twitter?.accessToken) {
-      console.log('❌ Twitter account not connected for user:', user._id);
-      return {
-        success: false,
-        error: 'Twitter account not connected'
-      };
-    }
-
-    // Refresh token if expired
-    let accessToken = user.socialAccounts.twitter.accessToken;
-    const tokenExpiresAt = new Date(user.socialAccounts.twitter.expiresAt);
-    const now = new Date();
+    console.log('--- 🐦 DEBUGGING postToTwitter ---');
     
-    console.log('🔑 Token status:', {
-      expiresAt: tokenExpiresAt,
-      now: now,
-      isExpired: tokenExpiresAt < now
-    });
-
-    if (tokenExpiresAt < now) {
-      console.log('🔄 Twitter token expired, refreshing...');
-      const refreshResult = await twitterService.refreshToken(user.socialAccounts.twitter.refreshToken);
-      if (refreshResult.success) {
-        accessToken = refreshResult.access_token;
-        await User.findByIdAndUpdate(user._id, {
-          $set: {
-            'socialAccounts.twitter.accessToken': refreshResult.access_token,
-            'socialAccounts.twitter.refreshToken': refreshResult.refresh_token,
-            'socialAccounts.twitter.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
-          }
-        });
-        console.log('✅ Twitter token refreshed successfully');
-      } else {
-        console.log('❌ Failed to refresh Twitter token:', refreshResult.error);
-        return {
-          success: false,
-          error: 'Failed to refresh Twitter token: ' + refreshResult.error
-        };
-      }
-    } else {
-      console.log('✅ Twitter token is still valid');
+    // ✅ FIX: Check for the new OAuth 1.0a credentials
+    if (!user.socialAccounts?.twitter?.oauth_accessToken || !user.socialAccounts?.twitter?.oauth_accessSecret) {
+      console.log('❌ Twitter account not connected or missing OAuth 1.0a tokens for user:', user._id);
+      return { success: false, error: 'Twitter account not connected' };
     }
 
-    // Extract content based on post type
-    let content = '';
-    const twitterContent = post.platform_content?.twitter || {};
-    
-    console.log('📝 Twitter content extraction:', {
-      postType: post.post_type,
-      twitterContent: twitterContent,
-      originalContent: post.content
+    // ✅ FIX: Initialize the twitter-api-v2 client with the user's permanent tokens
+    const client = new TwitterApi({
+      appKey: config.TWITTER_APP_KEY,
+      appSecret: config.TWITTER_APP_SECRET,
+      accessToken: user.socialAccounts.twitter.oauth_accessToken,
+      accessSecret: user.socialAccounts.twitter.oauth_accessSecret,
     });
 
-    if (post.post_type === 'poll' && twitterContent.poll) {
-      // For polls, use the poll question
-      content = twitterContent.poll.question || 
-                post.content?.caption || 
-                post.title || 
-                'Poll';
-      console.log('📊 Using poll question:', content);
-      
-    } else {
-      // For regular tweets and threads, use caption or title
-      content = post.content?.caption || 
-                post.content?.text || 
-                post.title || 
-                'Tweet';
-      console.log('🐦 Using tweet content:', content);
-    }
-
-    // Upload media files if any
     const mediaIds = [];
     if (post.media && post.media.length > 0) {
-      console.log('📸 Uploading media files to Twitter...');
+      console.log('📸 Starting media processing loop...');
       for (const mediaFile of post.media) {
-        try {
-          const fs = require('fs');
-          const path = require('path');
-          
-          // Read the media file
-          const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-          const mediaBuffer = fs.readFileSync(mediaPath);
-          
-          console.log(`📤 Uploading ${mediaFile.filename} (${mediaFile.mimeType})`);
-          const uploadResult = await twitterService.uploadMedia(accessToken, mediaBuffer, mediaFile.mimeType);
-          
-          if (uploadResult.success) {
-            mediaIds.push(uploadResult.media_id);
-            console.log(`✅ Media uploaded successfully: ${uploadResult.media_id}`);
-          } else {
-            console.error(`❌ Failed to upload media ${mediaFile.filename}:`, uploadResult.error);
-          }
-        } catch (mediaError) {
-          console.error(`❌ Error uploading media ${mediaFile.filename}:`, mediaError);
+        const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
+        if (!fs.existsSync(mediaPath)) {
+          console.error(`❌ File not found at path: ${mediaPath}`);
+          continue;
+        }
+
+        console.log(`📤 Uploading ${mediaFile.filename} to Twitter...`);
+        
+        // ✅ FIX: Use the client to upload media
+        const mediaId = await client.v1.uploadMedia(mediaPath, { mimeType: mediaFile.mimeType });
+        if (mediaId) {
+          mediaIds.push(mediaId);
+          console.log(`✅ Media uploaded successfully. Media ID: ${mediaId}`);
         }
       }
     }
 
-    // Post to Twitter with enhanced content
-    const result = await twitterService.postTweet(accessToken, content, twitterContent, mediaIds);
+    // Prepare tweet data
+    const tweetData = { text: post.content?.caption || post.title || ' ' };
+    if (mediaIds.length > 0) {
+      tweetData.media = { media_ids: mediaIds };
+    }
 
-    console.log('📊 Final Twitter posting result:', result);
-    return result;
+    console.log('🚀 Posting tweet with data:', tweetData);
+
+    // ✅ FIX: Use the client to post the tweet using API v2
+    const result = await client.v2.tweet(tweetData);
+
+    console.log('🏁 Final result from Twitter:', result);
+    return { success: true, tweet_id: result.data.id, text: result.data.text };
 
   } catch (error) {
-    console.error('❌ Twitter posting error:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to post to Twitter'
-    };
+    console.error('❌ CRITICAL ERROR in postToTwitter:', error);
+    return { success: false, error: error.message || 'Failed to post to Twitter' };
   }
 }
 
-  // Post to Twitter
-  // async postToTwitter(post, user) {
-  //   try {
-  //     console.log('🐦 Starting Twitter posting process:', {
-  //       postId: post._id,
-  //       postType: post.post_type,
-  //       platformContent: post.platform_content?.twitter,
-  //       hasPollData: !!post.platform_content?.twitter?.poll,
-  //       hasThreadData: !!post.platform_content?.twitter?.thread
-  //     });
-
-  //     if (!user.socialAccounts?.twitter?.accessToken) {
-  //       console.log('❌ Twitter account not connected for user:', user._id);
-  //       return {
-  //         success: false,
-  //         error: 'Twitter account not connected'
-  //       };
-  //     }
-
-  //     // Refresh token if expired
-  //     let accessToken = user.socialAccounts.twitter.accessToken;
-  //     const tokenExpiresAt = new Date(user.socialAccounts.twitter.expiresAt);
-  //     const now = new Date();
-      
-  //     console.log('🔑 Token status:', {
-  //       expiresAt: tokenExpiresAt,
-  //       now: now,
-  //       isExpired: tokenExpiresAt < now
-  //     });
-
-  //     if (tokenExpiresAt < now) {
-  //       console.log('🔄 Twitter token expired, refreshing...');
-  //       const refreshResult = await twitterService.refreshToken(user.socialAccounts.twitter.refreshToken);
-  //       if (refreshResult.success) {
-  //         accessToken = refreshResult.access_token;
-  //         await User.findByIdAndUpdate(user._id, {
-  //           $set: {
-  //             'socialAccounts.twitter.accessToken': refreshResult.access_token,
-  //             'socialAccounts.twitter.refreshToken': refreshResult.refresh_token,
-  //             'socialAccounts.twitter.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
-  //           }
-  //         });
-  //         console.log('✅ Twitter token refreshed successfully');
-  //       } else {
-  //         console.log('❌ Failed to refresh Twitter token:', refreshResult.error);
-  //         return {
-  //           success: false,
-  //           error: 'Failed to refresh Twitter token: ' + refreshResult.error
-  //         };
-  //       }
-  //     } else {
-  //       console.log('✅ Twitter token is still valid');
-  //     }
-
-  //     // Prepare content based on post type
-  //     let content = '';
-      
-  //     // Handle different content formats
-  //     if (post.content) {
-  //       if (typeof post.content === 'string') {
-  //         content = post.content;
-  //       } else if (post.content.caption && post.content.caption.trim()) {
-  //         content = post.content.caption;
-  //       } else if (post.content.text && post.content.text.trim()) {
-  //         content = post.content.text;
-  //       } else if (post.content.content && post.content.content.trim()) {
-  //         content = post.content.content;
-  //       } else if (post.content.body && post.content.body.trim()) {
-  //         content = post.content.body;
-  //       } else if (post.content.message && post.content.message.trim()) {
-  //         content = post.content.message;
-  //       }
-  //     }
-      
-  //     // Fallback to title if no content
-  //     if (!content && post.title) {
-  //       content = post.title;
-  //       console.log('📝 Using title as content fallback:', post.title);
-  //     }
-      
-  //     // Additional fallback - if content object only has hashtags/mentions, use title
-  //     if (!content && post.content && typeof post.content === 'object') {
-  //       const contentKeys = Object.keys(post.content);
-  //       // Check if content only has hashtags/mentions or empty caption
-  //       const hasOnlyHashtagsMentions = contentKeys.length === 2 && 
-  //         contentKeys.includes('hashtags') && contentKeys.includes('mentions');
-  //       const hasEmptyCaption = contentKeys.includes('caption') && 
-  //         (!post.content.caption || !post.content.caption.trim());
-        
-  //       if (hasOnlyHashtagsMentions || hasEmptyCaption) {
-  //         if (post.title) {
-  //           content = post.title;
-  //           console.log('📝 Using title as fallback for hashtags-only or empty caption content:', post.title);
-  //         }
-  //       }
-  //     }
-      
-  //     // If still no content, try to extract from the original request body
-  //     if (!content) {
-  //       console.log('❌ No content found for Twitter post:', {
-  //         postContent: post.content,
-  //         postTitle: post.title,
-  //         contentType: typeof post.content,
-  //         contentKeys: post.content ? Object.keys(post.content) : 'no content object'
-  //       });
-        
-  //       // Try to get content from the request body if available
-  //       // Note: req is not available in this context, so we'll use other fallbacks
-  //     }
-      
-  //     // Final check - if still no content, return error
-  //     if (!content) {
-  //       return {
-  //         success: false,
-  //         error: 'No content provided for Twitter post. Please provide text content or a title.'
-  //       };
-  //     }
-      
-  //     const twitterContent = post.platform_content?.twitter || {};
-
-  //     console.log('📝 Twitter content preparation:', {
-  //       content: content,
-  //       contentLength: content.length,
-  //       twitterContent: twitterContent,
-  //       postType: post.post_type,
-  //       hasThread: !!twitterContent.thread?.length,
-  //       hasPoll: !!twitterContent.poll?.options?.length,
-  //       originalPostContent: post.content,
-  //       originalPostTitle: post.title
-  //     });
-
-  //     let result;
-
-  //     if (post.post_type === 'poll' && twitterContent.poll?.options?.length > 0) {
-  //       // Post poll
-  //       console.log('📊 Posting Twitter poll:', twitterContent.poll);
-  //       result = await twitterService.postPoll(accessToken, content, twitterContent.poll);
-  //     } else if (post.post_type === 'thread' && twitterContent.thread?.length > 0) {
-  //       // Post thread
-  //       console.log('🧵 Posting Twitter thread:', twitterContent.thread);
-        
-  //       // Upload media files and get media IDs for thread
-  //       const mediaIds = [];
-  //       if (post.media && post.media.length > 0) {
-  //         console.log('📸 Uploading media files to Twitter for thread...');
-  //         for (const mediaFile of post.media) {
-  //           try {
-  //             const fs = require('fs');
-  //             const path = require('path');
-              
-  //             // Read the media file
-  //             const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-  //             const mediaBuffer = fs.readFileSync(mediaPath);
-              
-  //             console.log(`📤 Uploading ${mediaFile.filename} (${mediaFile.mimeType})`);
-  //             const uploadResult = await twitterService.uploadMedia(accessToken, mediaBuffer, mediaFile.mimeType);
-              
-  //             if (uploadResult.success) {
-  //               mediaIds.push(uploadResult.media_id);
-  //               console.log(`✅ Media uploaded successfully: ${uploadResult.media_id}`);
-  //             } else {
-  //               console.error(`❌ Failed to upload media ${mediaFile.filename}:`, uploadResult.error);
-  //             }
-  //           } catch (mediaError) {
-  //             console.error(`❌ Error uploading media ${mediaFile.filename}:`, mediaError);
-  //           }
-  //         }
-  //       }
-        
-  //       // Add media to the first tweet in the thread
-  //       if (mediaIds.length > 0 && twitterContent.thread.length > 0) {
-  //         twitterContent.thread[0].media_ids = mediaIds;
-  //       }
-        
-  //       result = await twitterService.postThread(accessToken, twitterContent.thread);
-  //     } else {
-  //       // Post single tweet (for 'tweet' post type or fallback)
-  //       console.log('🐦 Posting single Twitter tweet:', content);
-        
-  //       // Upload media files and get media IDs
-  //       const mediaIds = [];
-  //       if (post.media && post.media.length > 0) {
-  //         console.log('📸 Uploading media files to Twitter...');
-  //         for (const mediaFile of post.media) {
-  //           try {
-  //             const fs = require('fs');
-  //             const path = require('path');
-              
-  //             // Read the media file
-  //             const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-  //             const mediaBuffer = fs.readFileSync(mediaPath);
-              
-  //             console.log(`📤 Uploading ${mediaFile.filename} (${mediaFile.mimeType})`);
-  //             const uploadResult = await twitterService.uploadMedia(accessToken, mediaBuffer, mediaFile.mimeType);
-              
-  //             if (uploadResult.success) {
-  //               mediaIds.push(uploadResult.media_id);
-  //               console.log(`✅ Media uploaded successfully: ${uploadResult.media_id}`);
-  //             } else {
-  //               console.error(`❌ Failed to upload media ${mediaFile.filename}:`, uploadResult.error);
-  //             }
-  //           } catch (mediaError) {
-  //             console.error(`❌ Error uploading media ${mediaFile.filename}:`, mediaError);
-  //           }
-  //         }
-  //       }
-        
-  //       result = await twitterService.postTweet(accessToken, content, mediaIds);
-  //     }
-
-  //     console.log('📤 Twitter API result:', result);
-  //     return result;
-  //   } catch (error) {
-  //     console.error('❌ Twitter posting error:', error);
-  //     return {
-  //       success: false,
-  //       error: error.message || 'Failed to post to Twitter'
-  //     };
-  //   }
-  // }
 
   // Post to YouTube
   async postToYouTube(post, user) {
@@ -610,9 +337,43 @@ async postToTwitter(post, user) {
     next();
   }
 
+  // REMOVED: The processUploadedMedia function is now handled entirely by the middleware in upload.js
+  // async processUploadedMedia(req) {
+  //   const mediaFiles = [];
+  //   const uploadedFiles = req.files || [];
+  //
+  //   if (uploadedFiles.length > 0) {
+  //     for (const file of uploadedFiles) {
+  //       if (!file.mimetype || !file.size) {
+  //         console.warn('⚠️ Skipping file with missing required properties:', {
+  //           originalname: file.originalname,
+  //           mimetype: file.mimetype,
+  //           size: file.size
+  //         });
+  //         continue;
+  //       }
+  //
+  //       const mediaItem = {
+  //         type: file.mimetype.startsWith('image') ? 'image' :
+  //               file.mimetype.startsWith('video') ? 'video' :
+  //               file.mimetype.startsWith('audio') ? 'audio' : 'document',
+  //         filename: file.filename || file.originalname || 'unknown',
+  //         size: file.size,
+  //         mimeType: file.mimetype,
+  //         url: file.url || `/uploads/${file.filename || file.originalname}`,
+  //         storage: file.storage || 'local',
+  //         storageKey: file.storageKey || null
+  //       };
+  //       mediaFiles.push(mediaItem);
+  //     }
+  //   }
+  //   return mediaFiles;
+  // }
+
 
   // Create a new post
   async createPost(req, res) {
+
     try {
       console.log('📝 Creating new post:', {
         body: req.body,
@@ -634,15 +395,15 @@ async postToTwitter(post, user) {
         content,
         platform,
         post_type,
-        status = 'draft',
-        scheduledAt,
+        // status is forced to 'draft' here for createPost
+        scheduledAt, // Used in `schedulePost`
         platformContent,
         tags,
         categories
       } = req.body;
 
-      // Force status to 'draft' for regular post creation
-      // Posts should be ed via the publish endpoint
+      // Force status to 'draft' for regular post creation.
+      // Posts should be published/scheduled via specific endpoints.
       const postStatus = 'draft';
 
       // Parse JSON strings if they exist
@@ -652,18 +413,18 @@ async postToTwitter(post, user) {
 
       try {
         if (platformContent) {
-          parsedPlatformContent = typeof platformContent === 'string' 
-            ? JSON.parse(platformContent) 
+          parsedPlatformContent = typeof platformContent === 'string'
+            ? JSON.parse(platformContent)
             : platformContent;
         }
         if (tags) {
-          parsedTags = typeof tags === 'string' 
-            ? JSON.parse(tags) 
+          parsedTags = typeof tags === 'string'
+            ? JSON.parse(tags)
             : Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
         }
         if (categories) {
-          parsedCategories = typeof categories === 'string' 
-            ? JSON.parse(categories) 
+          parsedCategories = typeof categories === 'string'
+            ? JSON.parse(categories)
             : Array.isArray(categories) ? categories : categories.split(',').map(c => c.trim());
         }
       } catch (parseError) {
@@ -674,36 +435,18 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Process uploaded media files
-      const mediaFiles = [];
-      if (req.body.media && req.body.media.length > 0) {
-        for (const file of req.body.media) {
-          const mediaItem = {
-            type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: `/uploads/${file.filename}`,
-            filename: file.filename,
-            size: file.size,
-            mimeType: file.mimetype
-          };
-          mediaFiles.push(mediaItem);
-        }
-      }
+      // ❌ REMOVED: const mediaFiles = this.processUploadedMedia(req); // No longer needed
+      // The `req.files` array is now already processed and formatted by `persistUploads` middleware.
 
-      // Parse content properly
       let parsedContent = {};
       if (content) {
         if (typeof content === 'string') {
-          // Check if it's the '[object Object]' string that frontend sometimes sends
           if (content === '[object Object]') {
-            console.log('⚠️ Frontend sent [object Object] string - using title as fallback');
-            // Use title as fallback since frontend has serialization issue
             parsedContent = { caption: title || 'No content provided' };
-            console.log('📝 Using title as fallback for [object Object]:', title);
           } else {
             try {
               parsedContent = JSON.parse(content);
             } catch {
-              // If not JSON, treat as plain text
               parsedContent = { caption: content };
             }
           }
@@ -711,6 +454,7 @@ async postToTwitter(post, user) {
           parsedContent = content;
         }
       }
+
 
       console.log('📝 Content parsing result:', {
         originalContent: content,
@@ -725,11 +469,14 @@ async postToTwitter(post, user) {
         post_type,
         author: req.user._id,
         status: postStatus,
+        // The `scheduledAt` field is set through the `scheduling` subdocument
+        // in the schema's pre-save hook, but for `createPost` (drafts), it's initially
+        // not set unless explicitly passed.
         scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
         platformContent: parsedPlatformContent,
         tags: parsedTags,
         categories: parsedCategories,
-        media: mediaFiles
+        media: req.files || [] // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
       });
 
       await post.save();
@@ -785,7 +532,7 @@ async postToTwitter(post, user) {
 
       const [posts, total] = await Promise.all([
         Post.find(query)
-          .sort(sort === 'recent' ? { createdAt: -1 } : sort === 'published' ? { publishedAt: -1 } : { lastEditedAt: -1, createdAt: -1 })
+          .sort(sort === 'recent' ? { createdAt: -1 } : sort === 'published' ? { published_at: -1 } : { lastEditedAt: -1, createdAt: -1 }) // Updated publishedAt sort to publishing.published_at
           .skip(skip)
           .limit(limitNum)
           .populate('author', 'name email role'),
@@ -816,7 +563,7 @@ async postToTwitter(post, user) {
   async getPost(req, res) {
     try {
       const { id } = req.params;
-      
+
       const baseQuery = { _id: id };
       if (req.user?.role !== 'admin') {
         baseQuery.author = req.user._id;
@@ -860,6 +607,12 @@ async postToTwitter(post, user) {
       if (updateData.categories && typeof updateData.categories === 'string') {
         updateData.categories = JSON.parse(updateData.categories);
       }
+
+      // If media files are present, they are already processed by `persistUploads`
+      if (req.files && req.files.length > 0) {
+        updateData.media = req.files; // Use the processed files
+      }
+
 
       const post = await Post.findOneAndUpdate(
         { _id: id, author: req.user._id },
@@ -924,20 +677,20 @@ async postToTwitter(post, user) {
   async getDrafts(req, res) {
     try {
       const { page = 1, limit = 10 } = req.query;
-      
+
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
       const skip = (pageNum - 1) * limitNum;
 
       const [drafts, total] = await Promise.all([
-        Post.find({ 
-          author: req.user._id, 
-          status: 'draft' 
+        Post.find({
+          author: req.user._id,
+          status: 'draft'
         })
-        .sort({ lastEditedAt: -1 })
-        .skip(skip)
-        .limit(limitNum)
-        .populate('author', 'username email'),
+          .sort({ lastEditedAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .populate('author', 'username email'),
         Post.countDocuments({
           author: req.user._id,
           status: 'draft'
@@ -982,6 +735,7 @@ async postToTwitter(post, user) {
         });
       }
 
+
       const {
         title,
         content,
@@ -999,18 +753,18 @@ async postToTwitter(post, user) {
 
       try {
         if (platformContent) {
-          parsedPlatformContent = typeof platformContent === 'string' 
-            ? JSON.parse(platformContent) 
+          parsedPlatformContent = typeof platformContent === 'string'
+            ? JSON.parse(platformContent)
             : platformContent;
         }
         if (tags) {
-          parsedTags = typeof tags === 'string' 
-            ? JSON.parse(tags) 
+          parsedTags = typeof tags === 'string'
+            ? JSON.parse(tags)
             : Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
         }
         if (categories) {
-          parsedCategories = typeof categories === 'string' 
-            ? JSON.parse(categories) 
+          parsedCategories = typeof categories === 'string'
+            ? JSON.parse(categories)
             : Array.isArray(categories) ? categories : categories.split(',').map(c => c.trim());
         }
       } catch (parseError) {
@@ -1021,20 +775,7 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Process uploaded media files
-      const mediaFiles = [];
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-          const mediaItem = {
-            type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: `/uploads/${file.filename}`,
-            filename: file.filename,
-            size: file.size,
-            mimeType: file.mimetype
-          };
-          mediaFiles.push(mediaItem);
-        }
-      }
+      // ❌ REMOVED: const mediaFiles = this.processUploadedMedia(req); // No longer needed
 
       // Create post with published status
       const post = new Post({
@@ -1047,7 +788,7 @@ async postToTwitter(post, user) {
         platformContent: parsedPlatformContent,
         tags: parsedTags,
         categories: parsedCategories,
-        media: mediaFiles,
+        media: req.files || [], // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
         publishing: {
           published_at: new Date(),
           platform_post_id: null // Will be updated after successful platform posting
@@ -1141,18 +882,18 @@ async postToTwitter(post, user) {
 
       try {
         if (platformContent) {
-          parsedPlatformContent = typeof platformContent === 'string' 
-            ? JSON.parse(platformContent) 
+          parsedPlatformContent = typeof platformContent === 'string'
+            ? JSON.parse(platformContent)
             : platformContent;
         }
         if (tags) {
-          parsedTags = typeof tags === 'string' 
-            ? JSON.parse(tags) 
+          parsedTags = typeof tags === 'string'
+            ? JSON.parse(tags)
             : Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
         }
         if (categories) {
-          parsedCategories = typeof categories === 'string' 
-            ? JSON.parse(categories) 
+          parsedCategories = typeof categories === 'string'
+            ? JSON.parse(categories)
             : Array.isArray(categories) ? categories : categories.split(',').map(c => c.trim());
         }
       } catch (parseError) {
@@ -1163,20 +904,7 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Process uploaded media files
-      const mediaFiles = [];
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-          const mediaItem = {
-            type: file.mimetype.startsWith('image') ? 'image' : 'video',
-            url: `/uploads/${file.filename}`,
-            filename: file.filename,
-            size: file.size,
-            mimeType: file.mimetype
-          };
-          mediaFiles.push(mediaItem);
-        }
-      }
+      // ❌ REMOVED: const mediaFiles = this.processUploadedMedia(req); // No longer needed
 
       // Create post with scheduled status
       const post = new Post({
@@ -1186,13 +914,15 @@ async postToTwitter(post, user) {
         post_type,
         author: req.user._id,
         status: 'scheduled',
+        // The `scheduledAt` field is deprecated in favor of `scheduling.scheduled_at`
+        // but keeping it for now if other parts of the app rely on it.
         scheduledAt: new Date(scheduledAt),
         platformContent: parsedPlatformContent,
         tags: parsedTags,
         categories: parsedCategories,
-        media: mediaFiles,
+        media: req.files || [], // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
         scheduling: {
-          scheduled_for: new Date(scheduledAt),
+          scheduled_at: new Date(scheduledAt), // Corrected to match schema
           timezone: req.body.timezone || 'UTC'
         }
       });
@@ -1228,7 +958,7 @@ async postToTwitter(post, user) {
 
       // Find the post and verify ownership
       const post = await Post.findOne({ _id: id, author: userId });
-      
+
       if (!post) {
         return res.status(404).json({
           success: false,
@@ -1316,7 +1046,7 @@ async postToTwitter(post, user) {
 
       // Find the post and verify ownership
       const post = await Post.findOne({ _id: id, author: userId });
-      
+
       if (!post) {
         return res.status(404).json({
           success: false,
@@ -1346,9 +1076,10 @@ async postToTwitter(post, user) {
 
       // Update post status to scheduled
       post.status = 'scheduled';
+      // The `scheduledAt` field is deprecated in favor of `scheduling.scheduled_at`
       post.scheduledAt = new Date(scheduledAt);
       post.scheduling = {
-        scheduled_for: new Date(scheduledAt),
+        scheduled_at: new Date(scheduledAt), // Corrected to match schema
         timezone: timezone || 'UTC'
       };
 
@@ -1379,7 +1110,7 @@ async postToTwitter(post, user) {
       console.log('🔍 Testing Twitter connection for user:', userId);
 
       const user = await User.findById(userId);
-      
+
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -1397,11 +1128,11 @@ async postToTwitter(post, user) {
       }
 
       console.log('🐦 Twitter account found, testing API...');
-      
+
       // Test Twitter API call
       try {
         const result = await twitterService.getProfile(user.socialAccounts.twitter.accessToken);
-        
+
         res.json({
           success: true,
           twitterConnected: true,

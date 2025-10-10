@@ -40,26 +40,11 @@ const userSchema = new mongoose.Schema({
       default: ''
     },
     social_links: {
-      youtube: {
-        type: String,
-        default: ''
-      },
-      instagram: {
-        type: String,
-        default: ''
-      },
-      twitter: {
-        type: String,
-        default: ''
-      },
-      linkedin: {
-        type: String,
-        default: ''
-      },
-      facebook: {
-        type: String,
-        default: ''
-      }
+      youtube: String,
+      instagram: String,
+      twitter: String,
+      linkedin: String,
+      facebook: String,
     }
   },
   isActive: {
@@ -79,7 +64,7 @@ const userSchema = new mongoose.Schema({
     createdAt: {
       type: Date,
       default: Date.now,
-      expires: 2592000 // 30 days
+      expires: '30d'
     }
   }],
   socialAccounts: {
@@ -97,15 +82,31 @@ const userSchema = new mongoose.Schema({
       expiresAt: Date,
       connectedAt: Date
     },
+    
+    // ✅ START: UPDATED TWITTER SCHEMA
     twitter: {
+      // Profile Info
       id: String,
       username: String,
       name: String,
+      profileImageUrl: String,
+      connectedAt: Date,
+
+      // Permanent OAuth 1.0a Credentials (for posting and media uploads)
+      oauth_accessToken: String,
+      oauth_accessSecret: String,
+
+      // Temporary tokens (used only during the login flow)
+      oauth_token: String,
+      oauth_token_secret: String,
+
+      // ℹ️ Note: These OAuth 2.0 fields are no longer used by the new login flow
       accessToken: String,
       refreshToken: String,
       expiresAt: Date,
-      connectedAt: Date
     },
+    // ✅ END: UPDATED TWITTER SCHEMA
+
     instagram: {
       id: String,
       username: String,
@@ -153,7 +154,6 @@ userSchema.virtual('profileUrl').get(function() {
 // Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  
   try {
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);

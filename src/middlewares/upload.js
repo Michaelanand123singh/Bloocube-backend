@@ -1,22 +1,19 @@
-// src/middlewares/upload.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { isGcsEnabled, uploadBufferToGcs } = require('../utils/storage');
-const config = require('../config/env');
 
 // Ensure upload directory exists
-const uploadDir = './uploads';
+const uploadDir = path.resolve('./uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure multer for file uploads (memory storage so we can forward to GCS)
+// Configure multer to store files in memory as buffers
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
-  // Check file type
   const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
   const mimetype = allowedTypes.test(file.mimetype);
@@ -36,53 +33,58 @@ const upload = multer({
   fileFilter: fileFilter
 });
 
-// Helper to persist uploaded files to local or GCS and normalize req.files
+// Middleware to persist files to GCS or local storage
+// In src/middlewares/upload.js
+
 async function persistUploads(req, res, next) {
   try {
-    if (!req.files || req.files.length === 0) return next();
-
-    // Ensure local uploads dir exists if not using GCS
-    if (!isGcsEnabled()) {
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
+    if (!req.files || req.files.length === 0) {
+      return next();
     }
 
-    for (const file of req.files) {
+    // This will create a new array of file objects in the exact format the schema needs
+    const fileProcessingPromises = req.files.map(async (file) => {
       const originalExt = path.extname(file.originalname).toLowerCase();
-      const safeExt = originalExt || (file.mimetype.includes('video') ? '.mp4' : '.bin');
-      const hashedName = crypto.randomBytes(16).toString('hex') + safeExt;
-      const today = new Date();
-      const datePrefix = `${today.getFullYear()}/${(today.getMonth()+1).toString().padStart(2,'0')}/${today.getDate().toString().padStart(2,'0')}`;
+      const hashedName = crypto.randomBytes(16).toString('hex') + originalExt;
+      
+      let finalFileObject;
 
       if (isGcsEnabled()) {
-        try {
-          const gcsKey = `media/${datePrefix}/${hashedName}`;
-          const { key, url } = await uploadBufferToGcs(file.buffer, gcsKey, file.mimetype);
-          // Attach storage info for downstream controllers
-          file.storage = 'gcs';
-          file.storageKey = key;
-          file.url = url;
-          file.filename = hashedName; // keep a normalized filename reference
-        } catch (gcsError) {
-          console.warn('⚠️ GCS upload failed, falling back to local storage:', gcsError.message);
-          // Fallback to local storage
-          const destPath = path.join(uploadDir, hashedName);
-          fs.writeFileSync(destPath, file.buffer);
-          file.storage = 'local';
-          file.storageKey = `uploads/${hashedName}`;
-          file.url = `/uploads/${hashedName}`;
-          file.filename = hashedName;
-        }
+        const today = new Date();
+        const datePrefix = `${today.getFullYear()}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+        const gcsKey = `media/${datePrefix}/${hashedName}`;
+        const { key, url } = await uploadBufferToGcs(file.buffer, gcsKey, file.mimetype);
+        
+        finalFileObject = {
+          type: file.mimetype.startsWith('image/') ? 'image' : 'video',
+          url: url,
+          storage: 'gcs',
+          storageKey: key,
+          filename: hashedName,
+          size: file.size,
+          mimeType: file.mimetype,
+        };
+
       } else {
+        // Local storage fallback
         const destPath = path.join(uploadDir, hashedName);
         fs.writeFileSync(destPath, file.buffer);
-        file.storage = 'local';
-        file.storageKey = `uploads/${hashedName}`;
-        file.url = `/uploads/${hashedName}`;
-        file.filename = hashedName;
+        
+        finalFileObject = {
+          type: file.mimetype.startsWith('image/') ? 'image' : 'video',
+          url: `/uploads/${hashedName}`,
+          storage: 'local',
+          storageKey: null,
+          filename: hashedName,
+          size: file.size,
+          mimeType: file.mimetype,
+        };
       }
-    }
+      return finalFileObject;
+    });
+
+    // Replace req.files with our new, perfectly formatted file objects
+    req.files = await Promise.all(fileProcessingPromises);
 
     return next();
   } catch (err) {
@@ -90,14 +92,8 @@ async function persistUploads(req, res, next) {
   }
 }
 
-// Single-file variant helper
-async function persistUploadSingle(req, res, next) {
-  if (req.file) {
-    req.files = [req.file];
-  }
-  return persistUploads(req, res, next);
-}
-
-module.exports = Object.assign(upload, { persistUploads, persistUploadSingle });
-
-module.exports = upload;
+// ✅ FIX: Correctly export both the multer instance and the persist function
+module.exports = {
+  upload,
+  persistUploads,
+};

@@ -1,110 +1,98 @@
 // src/controllers/twitterController.js
 const twitterService = require('../services/social/twitter');
+const { TwitterApi } = require('twitter-api-v2');
+
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const config = require('../config/env');
 
 class TwitterController {
   // Generate Twitter OAuth URL
-  async generateAuthURL(req, res) {
-    try {
-      console.log('🔑 Twitter generateAuthURL called:', {
-        hasUser: !!req.user,
-        userId: req.userId || req.user?._id,
-        redirectUri: req.body?.redirectUri,
-        method: req.method
-      });
+  // ✅ NEW: Generate Twitter OAuth 1.0a URL
+// In src/controllers/twitterController.js
 
-      const { redirectUri } = req.body;
-      const state = jwt.sign(
-        { userId: req.userId || req.user._id },
-        config.JWT_SECRET,
-        { expiresIn: '30m' }
-      );
+async generateAuthURL(req, res) {
+  try {
+    const client = new TwitterApi({
+      appKey: config.TWITTER_APP_KEY,
+      appSecret: config.TWITTER_APP_SECRET,
+    });
+    
+    console.log('🔍 Using Twitter Callback URL:', config.TWITTER_CALLBACK_URL);
 
-      const authURL = twitterService.generateAuthURL(redirectUri, state);
+    const { url, oauth_token, oauth_token_secret } = await client.generateAuthLink(
+      config.TWITTER_CALLBACK_URL,
+      { linkMode: 'authorize' }
+    );
 
-      console.log('✅ Twitter auth URL generated:', { hasAuthURL: !!authURL, state: state.substring(0, 20) + '...' });
-      return res.json({ success: true, authURL, state, redirectUri });
-    } catch (error) {
-      console.error('❌ Twitter generateAuthURL error:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
+    // ✅ FIX: Save BOTH the token and the secret to identify the user on callback
+    await User.findByIdAndUpdate(req.user._id, {
+      'socialAccounts.twitter.oauth_token': oauth_token,
+      'socialAccounts.twitter.oauth_token_secret': oauth_token_secret
+    });
+
+    res.json({ success: true, authURL: url });
+  } catch (error) {
+    console.error('❌ Twitter generateAuthURL error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
+}
 
-  // Handle Twitter OAuth callback
-  async handleCallback(req, res) {
-    try {
-      const { code, state, redirectUri } = req.query;
-      const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+  // ✅ NEW: Handle Twitter OAuth 1.0a callback
+ // In src/controllers/twitterController.js
 
-      console.log("📥 Twitter Callback query params:", { code, state, redirectUri });
+async handleCallback(req, res) {
+  const { oauth_token, oauth_verifier } = req.query;
+  const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
 
-      if (!code || !state || !redirectUri) {
-        const msg = 'Missing code, state or redirectUri';
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(msg)}`);
-      }
-
-      // Verify state
-      let decodedState;
-      try {
-        decodedState = jwt.verify(state, config.JWT_SECRET);
-        console.log("✅ Decoded state:", decodedState);
-      } catch (error) {
-        console.error("❌ Invalid state:", error);
-        const msg = 'Invalid state';
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(msg)}`);
-      }
-
-      // Exchange code for token
-      console.log("🔄 Exchanging code for token with redirectUri:", redirectUri);
-      const tokenResult = await twitterService.exchangeCodeForToken(code, redirectUri, state);
-      console.log("🔑 Twitter token result:", tokenResult);
-
-      if (!tokenResult.success) {
-        const detail = tokenResult.error || 'Token exchange failed';
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(String(detail))}`);
-      }
-
-      // Fetch Twitter profile
-      let profileResult;
-      try {
-        profileResult = await twitterService.getProfile(tokenResult.access_token);
-        console.log("👤 Twitter profile result:", profileResult);
-      } catch (e) {
-        console.log("👤 Twitter profile fetch threw:", e);
-      }
-
-      // Update DB
-      await User.findByIdAndUpdate(
-        decodedState.userId,
-        {
-          $set: {
-            'socialAccounts.twitter.accessToken': tokenResult.access_token,
-            'socialAccounts.twitter.refreshToken': tokenResult.refresh_token,
-            'socialAccounts.twitter.expiresAt': new Date(Date.now() + tokenResult.expires_in * 1000),
-            'socialAccounts.twitter.connectedAt': new Date(),
-            ...(profileResult?.success && {
-              'socialAccounts.twitter.id': profileResult.user.id,
-              'socialAccounts.twitter.username': profileResult.user.username,
-              'socialAccounts.twitter.name': profileResult.user.name,
-              'socialAccounts.twitter.profileImageUrl': profileResult.user.profile_image_url
-            })
-          }
-        },
-        { upsert: true }
-      );
-
-      console.log("✅ Twitter user updated in DB");
-
-      return res.redirect(`${redirectToFrontend}/creator/settings?twitter=success`);
-    } catch (error) {
-      console.error("🔥 Twitter callback error:", error);
-      const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
-      const msg = error?.message || 'Callback failed';
-      return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(String(msg))}`);
+  try {
+    // ✅ FIX: Find the user by the oauth_token from the callback URL
+    const user = await User.findOne({ 'socialAccounts.twitter.oauth_token': oauth_token });
+    
+    if (!user) {
+      throw new Error('User not found or token is invalid. Please try connecting again.');
     }
+    
+    const oauth_token_secret = user.socialAccounts.twitter.oauth_token_secret;
+
+    if (!oauth_token || !oauth_verifier || !oauth_token_secret) {
+      throw new Error('Callback parameters are missing or invalid.');
+    }
+
+    const client = new TwitterApi({
+      appKey: config.TWITTER_APP_KEY,
+      appSecret: config.TWITTER_APP_SECRET,
+      accessToken: oauth_token,
+      accessSecret: oauth_token_secret,
+    });
+
+    const { client: loggedClient, accessToken, accessSecret } = await client.login(oauth_verifier);
+    const { data: userObject } = await loggedClient.v2.me({ 'user.fields': ['profile_image_url'] });
+
+    // ✅ FIX: Use the user._id we found from the database
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        'socialAccounts.twitter.oauth_accessToken': accessToken,
+        'socialAccounts.twitter.oauth_accessSecret': accessSecret,
+        'socialAccounts.twitter.id': userObject.id,
+        'socialAccounts.twitter.username': userObject.username,
+        'socialAccounts.twitter.name': userObject.name,
+        'socialAccounts.twitter.profileImageUrl': userObject.profile_image_url,
+        'socialAccounts.twitter.connectedAt': new Date(),
+      },
+      // Clean up the temporary tokens
+      $unset: {
+        'socialAccounts.twitter.oauth_token': 1,
+        'socialAccounts.twitter.oauth_token_secret': 1
+      }
+    });
+
+    return res.redirect(`${redirectToFrontend}/creator/settings?twitter=success`);
+  } catch (error) {
+    console.error("🔥 Twitter callback error:", error);
+    return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(error.message)}`);
   }
+}
 
   // Disconnect Twitter account
   async disconnect(req, res) {
@@ -212,7 +200,7 @@ async postContent(req, res) {
     if (type === "post") {
       // Single tweet
       console.log('🐦 Posting single tweet...');
-      result = await twitterService.postTweet(accessToken, content, mediaIds);
+      result = await twitterService.postTweet(accessToken, content, {}, mediaIds);
 
     } else if (type === "thread") {
       // Thread of multiple tweets

@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const instagramController = require('../controllers/instagramController');
 const { authenticate } = require('../middlewares/auth');
-const upload = require('../middlewares/upload');
+const { upload, persistUploads } = require('../middlewares/upload');
 
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
@@ -33,7 +33,7 @@ router.delete('/disconnect', instagramController.disconnect);
 router.post('/post', instagramController.postContent); // Handles: post, story
 
 // Media management
-router.post('/upload-media', upload.single('media'), upload.persistUploadSingle, instagramController.uploadMedia);
+router.post('/upload-media', upload.single('media'), persistUploads, instagramController.uploadMedia);
 
 // Analytics and insights
 router.get('/insights', instagramController.getInsights);

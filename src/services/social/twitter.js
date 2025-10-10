@@ -2,13 +2,14 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const config = require('../../config/env');
+const { TwitterApi } = require('twitter-api-v2');
 
 class TwitterService {
   constructor() {
     this.clientId = config.TWITTER_CLIENT_ID;
     this.clientSecret = config.TWITTER_CLIENT_SECRET;
     this.baseURL = 'https://api.twitter.com/2';
-    this.uploadURL = 'https://upload.twitter.com/1.1'; // Fixed: Added missing uploadURL
+    this.uploadURL = 'https://api.x.com/2/media/upload'; // Fixed: Added missing uploadURL
     this.authURL = 'https://twitter.com/i/oauth2/authorize';
     this.tokenURL = 'https://api.twitter.com/2/oauth2/token';
     this.codeVerifiers = new Map();
@@ -27,7 +28,8 @@ class TwitterService {
       response_type: 'code',
       client_id: this.clientId,
       redirect_uri: redirectUri,
-      scope: config.TWITTER_SCOPES || 'tweet.read users.read offline.access', // Fallback scopes
+      scope: config.TWITTER_SCOPES || 'tweet.read tweet.write users.read offline.access',
+       // Fallback scopes
       state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
@@ -423,171 +425,141 @@ async postPoll(accessToken, question, poll) {
     }
   }
   // Upload media (images, GIFs, videos)
-  async uploadMedia(accessToken, mediaBuffer, mimeType) {
-    try {
-      // Determine media type and appropriate endpoint
-      const isVideo = mimeType.startsWith('video/');
-      const isGif = mimeType === 'image/gif';
-      
-      // For videos, we need to use chunked upload
-      if (isVideo) {
-        return await this.uploadVideoChunked(accessToken, mediaBuffer, mimeType);
-      }
+ // In src/services/social/twitter.js
 
-      // For images and GIFs, use simple upload
-      const FormData = require('form-data');
-      const formData = new FormData();
-      
-      formData.append('media', mediaBuffer, {
-        filename: `media.${mimeType.split('/')[1]}`,
-        contentType: mimeType
+// ... (keep the constructor and other functions the same)
+
+// ✅ NEW uploadMedia function using API v2 simple upload
+async uploadMedia(oauthAccessToken, oauthAccessSecret, mediaBuffer, mimeType) {
+  try {
+      // Initialize the client with the USER'S OAuth 1.0a credentials
+      const userClient = new TwitterApi({
+          appKey: config.TWITTER_APP_KEY,
+          appSecret: config.TWITTER_APP_SECRET,
+          accessToken: oauthAccessToken,
+          accessSecret: oauthAccessSecret,
       });
 
-      const response = await axios.post(
-        `${this.uploadURL}/media/upload.json`,
+      // The library handles all signing and multipart formatting
+      const mediaId = await userClient.v1.uploadMedia(mediaBuffer, { mimeType });
+      
+      return {
+          success: true,
+          media_id: mediaId, // The library returns the media_id_string
+      };
+
+  } catch (error) {
+      console.error('❌ Twitter v1.1 media upload error:', error);
+      return {
+          success: false,
+          error: error.message || 'Failed to upload media using v1.1 endpoint',
+      };
+  }
+}
+
+// ✅ NEW uploadVideoChunked function using API v2 chunked upload
+async uploadVideoChunked(accessToken, videoBuffer, mimeType) {
+  try {
+    // Step 1: Initialize upload
+    const initResponse = await axios.post(
+      'https://upload.twitter.com/2/media/upload/initialize',
+      {
+        total_bytes: videoBuffer.length,
+        media_type: mimeType,
+        media_category: 'tweet_video',
+      },
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      }
+    );
+    const mediaId = initResponse.data.data.id;
+
+    // Step 2: Upload chunks (append)
+    const chunkSize = 4 * 1024 * 1024; // 4MB chunks
+    let segmentIndex = 0;
+    for (let offset = 0; offset < videoBuffer.length; offset += chunkSize) {
+      const chunk = videoBuffer.slice(offset, offset + chunkSize);
+      const formData = new FormData();
+      formData.append('media', chunk);
+
+      await axios.post(
+        `https://upload.twitter.com/2/media/upload/${mediaId}/append`,
         formData,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
-            ...formData.getHeaders()
-          }
+            ...formData.getHeaders(),
+          },
+          params: {
+            segment_index: segmentIndex,
+          },
         }
       );
-
-      return {
-        success: true,
-        media_id: response.data.media_id_string,
-        size: response.data.size,
-        type: isGif ? 'gif' : 'image',
-        image: response.data.image
-      };
-    } catch (error) {
-      console.error('Twitter media upload error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.errors?.[0]?.message || 'Failed to upload media',
-        statusCode: error.response?.status,
-      };
+      segmentIndex++;
     }
+
+    // Step 3: Finalize upload
+    const finalizeResponse = await axios.post(
+      `https://upload.twitter.com/2/media/upload/${mediaId}/finalize`,
+      null, // No body needed for finalize
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      }
+    );
+
+    // Wait for processing if necessary
+    if (finalizeResponse.data.data.processing_info) {
+        await this.checkMediaStatus(accessToken, mediaId);
+    }
+    
+    return {
+      success: true,
+      media_key: finalizeResponse.data.data.media_key,
+    };
+  } catch (error) {
+    console.error('❌ Twitter API v2 video upload error:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.detail || 'Failed to upload video using API v2',
+    };
   }
+}
 
-  // Upload video using chunked upload (required for videos > 5MB)
-  async uploadVideoChunked(accessToken, videoBuffer, mimeType) {
+// ✅ UPDATED checkMediaStatus to use API v2
+async checkMediaStatus(accessToken, mediaId) {
     try {
-      const FormData = require('form-data');
-      
-      // Step 1: Initialize upload
-      const initFormData = new FormData();
-      initFormData.append('command', 'INIT');
-      initFormData.append('media_type', mimeType);
-      initFormData.append('total_bytes', videoBuffer.length);
-
-      const initResponse = await axios.post(
-        `${this.uploadURL}/media/upload.json`,
-        initFormData,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            ...initFormData.getHeaders()
-          }
-        }
-      );
-
-      const mediaId = initResponse.data.media_id_string;
-      const chunkSize = 5 * 1024 * 1024; // 5MB chunks
-      let segmentIndex = 0;
-
-      // Step 2: Upload chunks
-      for (let offset = 0; offset < videoBuffer.length; offset += chunkSize) {
-        const chunk = videoBuffer.slice(offset, offset + chunkSize);
-        
-        const chunkFormData = new FormData();
-        chunkFormData.append('command', 'APPEND');
-        chunkFormData.append('media_id', mediaId);
-        chunkFormData.append('segment_index', segmentIndex);
-        chunkFormData.append('media', chunk, {
-          filename: `chunk_${segmentIndex}`,
-          contentType: mimeType
-        });
-
-        await axios.post(
-          `${this.uploadURL}/media/upload.json`,
-          chunkFormData,
-          {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              ...chunkFormData.getHeaders()
+        const response = await axios.get(
+            `https://upload.twitter.com/2/media/upload`,
+            {
+                params: {
+                    command: 'STATUS',
+                    media_id: mediaId,
+                },
+                headers: { 'Authorization': `Bearer ${accessToken}` },
             }
-          }
         );
 
-        segmentIndex++;
-      }
-
-      // Step 3: Finalize upload
-      const finalizeFormData = new FormData();
-      finalizeFormData.append('command', 'FINALIZE');
-      finalizeFormData.append('media_id', mediaId);
-
-      const finalizeResponse = await axios.post(
-        `${this.uploadURL}/media/upload.json`,
-        finalizeFormData,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            ...finalizeFormData.getHeaders()
-          }
+        const state = response.data.data.processing_info?.state;
+        if (state === 'succeeded') {
+            return { success: true, ready: true };
+        } else if (state === 'failed') {
+            throw new Error('Media processing failed');
         }
-      );
 
-      return {
-        success: true,
-        media_id: mediaId,
-        size: videoBuffer.length,
-        type: 'video',
-        processing_info: finalizeResponse.data.processing_info
-      };
-    } catch (error) {
-      console.error('Twitter video upload error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.errors?.[0]?.message || 'Failed to upload video',
-        statusCode: error.response?.status,
-      };
-    }
-  }
-
-  // Check media processing status (for videos)
-  async checkMediaStatus(accessToken, mediaId) {
-    try {
-      const response = await axios.get(
-        `${this.uploadURL}/media/upload.json`,
-        {
-          params: {
-            command: 'STATUS',
-            media_id: mediaId
-          },
-          headers: {
-            'Authorization': `Bearer ${accessToken}`
-          }
+        // If still in progress, wait and check again
+        const checkAfterSecs = response.data.data.processing_info.check_after_secs;
+        if (checkAfterSecs) {
+            await new Promise(resolve => setTimeout(resolve, checkAfterSecs * 1000));
+            return this.checkMediaStatus(accessToken, mediaId);
         }
-      );
 
-      return {
-        success: true,
-        media_id: mediaId,
-        processing_info: response.data.processing_info,
-        ready: response.data.processing_info?.state === 'succeeded'
-      };
+        return { success: true, ready: false };
+
     } catch (error) {
-      console.error('Twitter media status check error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.errors?.[0]?.message || 'Failed to check media status',
-        statusCode: error.response?.status,
-      };
+        console.error('❌ Twitter media status check error:', error.response?.data || error.message);
+        return { success: false, error: 'Failed to check media status' };
     }
-  }
+}
 
   async getProfile(accessToken) {
     try {

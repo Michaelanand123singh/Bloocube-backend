@@ -29,11 +29,16 @@ const config = {
   // Social Media API Keys
   INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID,
   INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET,
-  INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'user_profile,user_media',
+  // Use Facebook Login scopes for Instagram Business (Graph API)
+  // If you need messaging/content publish add: instagram_manage_messages, instagram_content_publish, pages_manage_metadata
+  INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'instagram_basic,instagram_manage_insights,instagram_manage_comments,pages_show_list,pages_read_engagement',
   FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
   FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET,
   TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID,
   TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET,
+  TWITTER_APP_KEY:process.env.TWITTER_APP_KEY,
+TWITTER_APP_SECRET: process.env.TWITTER_APP_SECRET,
+TWITTER_CALLBACK_URL: process.env.TWITTER_CALLBACK_URL,
   LINKEDIN_CLIENT_ID: process.env.LINKEDIN_CLIENT_ID,
   LINKEDIN_CLIENT_SECRET: process.env.LINKEDIN_CLIENT_SECRET,
   LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'openid profile email w_member_social',
@@ -46,7 +51,7 @@ const config = {
   YOUTUBE_CLIENT_SECRET: process.env.YOUTUBE_CLIENT_SECRET,
   
   // Twitter OAuth
-  TWITTER_SCOPES: process.env.TWITTER_SCOPES || 'tweet.read users.read offline.access',
+  TWITTER_SCOPES: process.env.TWITTER_SCOPES || 'tweet.read tweet.write users.read offline.access',
   
   // AI Service Configuration (Updated for stateless flow)
   AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:8001',
@@ -89,12 +94,14 @@ const config = {
 
 // ✅ Validate required environment variables
 const requiredEnvVars = [
-
-  'MONGODB_URI',
-  'REDIS_URL',
   'JWT_SECRET',
   'JWT_REFRESH_SECRET'
 ];
+
+// In development mode, make database and Redis optional
+if (config.NODE_ENV === 'production') {
+  requiredEnvVars.push('MONGODB_URI', 'REDIS_URL');
+}
 
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
