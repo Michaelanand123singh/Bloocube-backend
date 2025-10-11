@@ -1,6 +1,7 @@
 // src/services/social/linkedin.js
 const axios = require('axios');
 const config = require('../../config/env');
+const fs = require('fs');
 
 class LinkedInService {
   constructor() {
@@ -104,53 +105,118 @@ class LinkedInService {
     }
   }
 
-  // Post content to LinkedIn
+  // ✅ NEW: Step 1 - Register the image upload
+  async registerUpload(accessToken, authorId) {
+    try {
+      const response = await axios.post(
+        `${this.apiBase}/assets?action=registerUpload`,
+        {
+          registerUploadRequest: {
+            recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+            owner: authorId,
+            serviceRelationships: [
+              {
+                relationshipType: 'OWNER',
+                identifier: 'urn:li:userGeneratedContent',
+              },
+            ],
+          },
+        },
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+      const uploadUrl = response.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+      const assetUrn = response.data.value.asset;
+      return { success: true, uploadUrl, assetUrn };
+    } catch (error) {
+      console.error('❌ LinkedIn Register Upload Error:', error.response?.data);
+      return { success: false, error: 'Failed to register upload' };
+    }
+  }
+
+  // ✅ NEW: Step 2 - Upload the image binary
+  async uploadImage(uploadUrl, imageBuffer) {
+    try {
+      await axios.put(uploadUrl, imageBuffer, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('❌ LinkedIn Image Upload Error:', error.response?.data);
+      return { success: false, error: 'Failed to upload image binary' };
+    }
+  }
+
+  // ✅ UPDATED: The main post creation function
   async post(accessToken, payload) {
     try {
       console.log('💼 Posting to LinkedIn:', {
         textLength: payload.text?.length,
-        hasMedia: !!payload.media
+        hasMedia: !!payload.media,
       });
 
-      // LinkedIn API endpoint for sharing content
-      const response = await axios.post(
-        'https://api.linkedin.com/v2/ugcPosts',
-        {
-          author: `urn:li:person:${payload.authorId}`,
-          lifecycleState: 'PUBLISHED',
-          specificContent: {
-            'com.linkedin.ugc.ShareContent': {
-              shareCommentary: {
-                text: payload.text
-              },
-              shareMediaCategory: payload.media ? 'IMAGE' : 'NONE'
-            }
-          },
-          visibility: {
-            'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
-          }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'X-Restli-Protocol-Version': '2.0.0'
-          }
+      let mediaAssetUrn = null;
+
+      // --- Media Upload Flow ---
+      if (payload.media && payload.media.buffer) {
+        // 1. Register the upload
+        const registerResult = await this.registerUpload(accessToken, payload.authorId);
+        if (!registerResult.success) {
+          throw new Error('LinkedIn upload registration failed.');
         }
-      );
+
+        // 2. Upload the image
+        const uploadResult = await this.uploadImage(registerResult.uploadUrl, payload.media.buffer);
+        if (!uploadResult.success) {
+          throw new Error('LinkedIn image binary upload failed.');
+        }
+
+        mediaAssetUrn = registerResult.assetUrn; // Save the asset URN for the post
+        console.log(`✅ LinkedIn media uploaded successfully: ${mediaAssetUrn}`);
+      }
+      // --- End Media Upload Flow ---
+
+      const postBody = {
+        author: payload.authorId,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: {
+              text: payload.text,
+            },
+            shareMediaCategory: mediaAssetUrn ? 'IMAGE' : 'NONE',
+            ...(mediaAssetUrn && {
+              media: [
+                {
+                  status: 'READY',
+                  media: mediaAssetUrn,
+                },
+              ],
+            }),
+          },
+        },
+        visibility: {
+          'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
+        },
+      };
+
+      const response = await axios.post(`${this.apiBase}/ugcPosts`, postBody, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+      });
 
       return {
         success: true,
         post_id: response.data.id,
-        text: payload.text,
-        platform: 'linkedin'
       };
     } catch (error) {
       console.error('❌ LinkedIn post error:', error.response?.data || error.message);
       return {
         success: false,
         error: error.response?.data?.message || 'Failed to post to LinkedIn',
-        statusCode: error.response?.status
       };
     }
   }

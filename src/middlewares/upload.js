@@ -13,15 +13,21 @@ if (!fs.existsSync(uploadDir)) {
 // Configure multer to store files in memory as buffers
 const storage = multer.memoryStorage();
 
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
+// In src/middlewares/upload.js
 
-  if (mimetype && extname) {
-    return cb(null, true);
+const fileFilter = (req, file, cb) => {
+  // We will keep your original regex, just adding 'quicktime' for .mov files
+  const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi|quicktime/;
+
+  // This logic correctly uses your regex to validate the MIME type
+  const allowedSubstrings = allowedTypes.source.split('|');
+  const isValid = allowedSubstrings.some(type => file.mimetype.includes(type));
+
+  if (isValid) {
+    cb(null, true); // Accept the file
   } else {
-    cb(new Error('Only image and video files are allowed!'));
+    // Reject the file with a clear error
+    cb(new Error('Only image and video files are allowed!'), false);
   }
 };
 

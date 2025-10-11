@@ -204,14 +204,14 @@ async postToTwitter(post, user) {
       const title = youtubeContent.title || post.title || 'Untitled Video';
       const description = youtubeContent.description || post.content?.caption || '';
       const tags = youtubeContent.tags || [];
-      const privacyStatus = youtubeContent.privacy_status || 'private';
+      const desiredPrivacyStatus = youtubeContent.privacy_status || 'private'; // Get the desired status
 
       console.log('🎬 Uploading video to YouTube:', {
         title,
         description: description.substring(0, 100) + '...',
         tagsCount: tags.length,
         videoSize: videoBuffer.length,
-        privacyStatus
+        desiredPrivacyStatus // This log will now show 'public'
       });
 
       // Upload video to YouTube
@@ -220,11 +220,15 @@ async postToTwitter(post, user) {
         videoBuffer,
         title,
         description,
-        tags
+        tags,
+        desiredPrivacyStatus // ✅ FIX: Pass the desiredPrivacyStatus directly
       );
 
       if (uploadResult.success) {
         console.log('✅ YouTube video uploaded successfully:', uploadResult.video_id);
+        // ❌ REMOVED: The conditional privacy update call is no longer needed
+        // because uploadVideo now correctly sets the privacy status from the start.
+
         return {
           success: true,
           video_id: uploadResult.video_id,
@@ -289,12 +293,28 @@ async postToTwitter(post, user) {
         contentLength: content.length,
         hasMedia: !!(post.media && post.media.length > 0)
       });
+      const authorId = user.socialAccounts?.linkedin?.id;
+      if (!authorId) {
+        return { success: false, error: 'LinkedIn user ID not found.' };
+      }
+      const authorUrn = `urn:li:person:${authorId}`;
+    let mediaPayload = null;
+    if (post.media && post.media.length > 0) {
+      const mediaFile = post.media[0];
+      const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
+      if (fs.existsSync(mediaPath)) {
+        mediaPayload = {
+          buffer: fs.readFileSync(mediaPath), // Read file into a buffer
+          type: mediaFile.mimeType,
+        };
+      }
+    }
 
       // Prepare LinkedIn post payload
       const payload = {
-        text: content,
-        authorId: user.socialAccounts.linkedin.profileId || 'me', // LinkedIn profile ID
-        media: post.media && post.media.length > 0 ? post.media[0] : null
+        text: post.content?.caption || post.title || ' ',
+        authorId: authorUrn,
+        media: mediaPayload, // Pass the media object with the buffer
       };
 
       // Post to LinkedIn
@@ -337,38 +357,8 @@ async postToTwitter(post, user) {
     next();
   }
 
-  // REMOVED: The processUploadedMedia function is now handled entirely by the middleware in upload.js
-  // async processUploadedMedia(req) {
-  //   const mediaFiles = [];
-  //   const uploadedFiles = req.files || [];
-  //
-  //   if (uploadedFiles.length > 0) {
-  //     for (const file of uploadedFiles) {
-  //       if (!file.mimetype || !file.size) {
-  //         console.warn('⚠️ Skipping file with missing required properties:', {
-  //           originalname: file.originalname,
-  //           mimetype: file.mimetype,
-  //           size: file.size
-  //         });
-  //         continue;
-  //       }
-  //
-  //       const mediaItem = {
-  //         type: file.mimetype.startsWith('image') ? 'image' :
-  //               file.mimetype.startsWith('video') ? 'video' :
-  //               file.mimetype.startsWith('audio') ? 'audio' : 'document',
-  //         filename: file.filename || file.originalname || 'unknown',
-  //         size: file.size,
-  //         mimeType: file.mimetype,
-  //         url: file.url || `/uploads/${file.filename || file.originalname}`,
-  //         storage: file.storage || 'local',
-  //         storageKey: file.storageKey || null
-  //       };
-  //       mediaFiles.push(mediaItem);
-  //     }
-  //   }
-  //   return mediaFiles;
-  // }
+
+  
 
 
   // Create a new post

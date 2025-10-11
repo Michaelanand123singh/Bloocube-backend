@@ -8,10 +8,12 @@ class YouTubeService {
     this.clientId = config.YOUTUBE_CLIENT_ID;
     this.clientSecret = config.YOUTUBE_CLIENT_SECRET;
     this.baseURL = 'https://www.googleapis.com/youtube/v3';
+    this.uploadURL = 'https://www.googleapis.com/upload/youtube/v3/videos'; 
     this.authURL = 'https://accounts.google.com/o/oauth2/v2/auth';
     this.tokenURL = 'https://oauth2.googleapis.com/token';
     this.codeVerifiers = new Map(); // Store code verifiers temporarily
   }
+
 
   // Generate OAuth 2.0 authorization URL with PKCE
   generateAuthURL(redirectUri, state) {
@@ -37,7 +39,35 @@ class YouTubeService {
 
     return `${this.authURL}?${params.toString()}`;
   }
-
+  async updateVideoPrivacyStatus(accessToken, videoId, privacyStatus) {
+    try {
+      console.log(`📡 Updating video ${videoId} privacy status to ${privacyStatus}...`);
+      const response = await axios.put(`${this.baseURL}/videos?part=status`,
+        {
+          id: videoId,
+          status: {
+            privacyStatus: privacyStatus
+          }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+      console.log(`✅ Video ${videoId} privacy status updated to ${response.data.status.privacyStatus}`);
+      return { success: true, newPrivacyStatus: response.data.status.privacyStatus };
+    } catch (error) {
+      console.error('❌ YouTube video privacy update error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.error?.message || 'Failed to update video privacy',
+        statusCode: error.response?.status,
+        raw: error.response?.data,
+      };
+    }
+  }
   // Exchange authorization code for access token
   async exchangeCodeForToken(code, redirectUri, state) {
     try {
@@ -174,187 +204,148 @@ class YouTubeService {
   }
 
   // Upload video to YouTube
-  async uploadVideo(accessToken, videoBuffer, title, description, tags = [], onProgress = null) {
-    try {
-      console.log('🎬 Starting YouTube video upload...', {
-        title,
-        descriptionLength: description?.length,
-        tagsCount: tags?.length,
-        videoSize: videoBuffer?.length
-      });
+ // In src/services/social/youtube.js
 
-      // Step 1: Initialize resumable upload session
-      const sessionInitResponse = await axios.post(
-        `${this.uploadURL}?part=snippet,status&uploadType=resumable`,
-        {
-          snippet: {
-            title: title,
-            description: description,
-            tags: tags,
-            categoryId: '22' // People & Blogs
-          },
-          status: {
-            privacyStatus: 'private' // Start as private
-          }
+ async uploadVideo(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', onProgress = null) {
+  try {
+    console.log('🎬 Starting YouTube video upload...', {
+      title,
+      descriptionLength: description?.length,
+      tagsCount: tags?.length,
+      videoSize: videoBuffer?.length,
+      privacyStatus // ✅ This should now log the value passed from the controller (e.g., 'public')
+    });
+
+    const metadata = {
+      snippet: {
+        title: title,
+        description: description,
+        tags: tags,
+        categoryId: '22', // People & Blogs
+      },
+      status: {
+        privacyStatus: privacyStatus, // ✅ FIX: Use the 'privacyStatus' parameter here
+      },
+    };
+
+    // Step 1: Initialize resumable upload to get the upload URL
+    const initResponse = await axios.post(
+      `${this.uploadURL}?part=snippet,status&uploadType=resumable`,
+      metadata,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Length': videoBuffer.length,
+          'X-Upload-Content-Type': 'video/*', // Generic video type
         },
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json; charset=UTF-8',
-            'X-Upload-Content-Length': videoBuffer.length,
-            'X-Upload-Content-Type': 'video/*'
-          },
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity
-        }
-      );
-
-      const uploadUrl = sessionInitResponse.headers.location;
-      if (!uploadUrl) {
-        throw new Error('No upload URL received from YouTube');
       }
+    );
 
-      console.log('📤 Upload session created:', uploadUrl);
-
-      // Step 2: Upload the video data in chunks
-      const chunkSize = 256 * 1024; // 256KB chunks
-      const totalSize = videoBuffer.length;
-      let uploadedBytes = 0;
-
-      while (uploadedBytes < totalSize) {
-        const chunk = videoBuffer.slice(uploadedBytes, uploadedBytes + chunkSize);
-        const chunkStart = uploadedBytes;
-        const chunkEnd = Math.min(uploadedBytes + chunkSize - 1, totalSize - 1);
-
-        const contentRange = `bytes ${chunkStart}-${chunkEnd}/${totalSize}`;
-
-        try {
-          const uploadResponse = await axios.put(uploadUrl, chunk, {
-            headers: {
-              'Content-Range': contentRange,
-              'Content-Type': 'video/*',
-            },
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
-            timeout: 30000, // 30 seconds per chunk
-            onUploadProgress: (progressEvent) => {
-              if (onProgress) {
-                const overallProgress = ((uploadedBytes + progressEvent.loaded) / totalSize) * 100;
-                onProgress(overallProgress);
-              }
-            }
-          });
-
-          uploadedBytes += chunk.length;
-
-          console.log(`📊 Upload progress: ${((uploadedBytes / totalSize) * 100).toFixed(1)}%`);
-
-          // If upload is complete
-          if (uploadResponse.status === 200 || uploadResponse.status === 201) {
-            console.log('✅ Video uploaded successfully:', uploadResponse.data);
-            return {
-              success: true,
-              video_id: uploadResponse.data.id,
-              title: uploadResponse.data.snippet.title,
-              description: uploadResponse.data.snippet.description,
-              publishedAt: uploadResponse.data.snippet.publishedAt,
-              raw: uploadResponse.data
-            };
-          }
-
-        } catch (chunkError) {
-          console.error('❌ Chunk upload failed:', chunkError.message);
-          
-          // Check if we should retry
-          if (chunkError.response?.status === 308) {
-            // Resume from where we left off - get the range from headers
-            const rangeHeader = chunkError.response.headers['range'];
-            if (rangeHeader) {
-              const lastByte = parseInt(rangeHeader.split('-')[1]);
-              uploadedBytes = lastByte + 1;
-              console.log(`🔄 Resuming upload from byte: ${uploadedBytes}`);
-              continue;
-            }
-          }
-          
-          throw chunkError;
-        }
-      }
-
-      throw new Error('Upload did not complete');
-
-    } catch (error) {
-      console.error('❌ YouTube video upload error:', {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data
-      });
-
-      return {
-        success: false,
-        error: error.response?.data?.error?.message || 
-               error.message || 
-               'Failed to upload video to YouTube',
-        statusCode: error.response?.status,
-        raw: error.response?.data
-      };
+    const uploadUrl = initResponse.headers.location;
+    if (!uploadUrl) {
+      throw new Error('Failed to get resumable upload URL from YouTube');
     }
-  }
+    console.log('📤 Upload session created:', uploadUrl);
 
-  // Simple upload for small files (< 10MB)
-  async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = []) {
-    try {
-      const formData = new FormData();
-      
-      // Create blob from buffer
-      const videoBlob = new Blob([videoBuffer], { type: 'video/mp4' });
-      formData.append('video', videoBlob, 'video.mp4');
-
-      const metadata = {
-        snippet: {
-          title: title,
-          description: description,
-          tags: tags,
-          categoryId: '22'
-        },
-        status: {
-          privacyStatus: 'private'
+    // Step 2: Upload the video file using the session URL
+    const uploadResponse = await axios.put(uploadUrl, videoBuffer, {
+      headers: {
+        'Content-Length': videoBuffer.length,
+        'Content-Type': 'video/'
+      },
+      onUploadProgress: (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        console.log(`📊 Upload progress: ${percentCompleted}%`);
+        if (onProgress) {
+          onProgress(percentCompleted);
         }
-      };
+      },
+      validateStatus: (status) => (status >= 200 && status < 300) || status === 308,
+    });
 
-      formData.append('metadata', JSON.stringify(metadata));
-
-      const response = await axios.post(
-        `${this.uploadURL}?part=snippet,status&uploadType=multipart`,
-        formData,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            ...formData.getHeaders(),
-          },
-          maxBodyLength: 50 * 1024 * 1024, // 50MB
-          maxContentLength: 50 * 1024 * 1024,
-          timeout: 120000 // 2 minutes
-        }
-      );
-
+    // If the final status is 200 or 201, the upload is complete
+    if (uploadResponse.status === 200 || uploadResponse.status === 201) {
+      console.log('✅ Video uploaded successfully:', uploadResponse.data);
       return {
         success: true,
-        video_id: response.data.id,
-        title: response.data.snippet.title,
-        description: response.data.snippet.description,
-        publishedAt: response.data.snippet.publishedAt
+        video_id: uploadResponse.data.id,
+        title: uploadResponse.data.snippet.title,
+        description: uploadResponse.data.snippet.description,
+        publishedAt: uploadResponse.data.snippet.publishedAt,
       };
-
-    } catch (error) {
-      console.error('YouTube simple upload error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.error?.message || 'Failed to upload video',
-        statusCode: error.response?.status,
-      };
+    } else {
+      throw new Error(`Unexpected status code ${uploadResponse.status} after upload.`);
     }
+
+  } catch (error) {
+    console.error('❌ YouTube video upload error:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || error.message || 'Failed to upload video to YouTube',
+    };
   }
+}
+
+// Simple upload for small files (< 10MB)
+async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private') { // Ensure privacyStatus is accepted
+  try {
+    const formData = new FormData();
+
+    // Create blob from buffer
+    const videoBlob = new Blob([videoBuffer], { type: 'video/mp4' });
+    formData.append('video', videoBlob, 'video.mp4');
+
+    const metadata = {
+      snippet: {
+        title: title,
+        description: description,
+        tags: tags,
+        categoryId: '22'
+      },
+      status: {
+        privacyStatus: privacyStatus // ✅ FIX: Use the 'privacyStatus' parameter here
+      }
+    };
+
+    formData.append('metadata', JSON.stringify(metadata));
+
+    const response = await axios.post(
+      `${this.uploadURL}?part=snippet,status&uploadType=multipart`,
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          ...formData.getHeaders(),
+        },
+        maxBodyLength: 50 * 1024 * 1024, // 50MB
+        maxContentLength: 50 * 1024 * 1024,
+        timeout: 120000 // 2 minutes
+      }
+    );
+
+    return {
+      success: true,
+      video_id: response.data.id,
+      title: response.data.snippet.title,
+      description: response.data.snippet.description,
+      publishedAt: response.data.snippet.publishedAt
+    };
+
+  } catch (error) {
+    console.error('YouTube simple upload error:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || 'Failed to upload video',
+      statusCode: error.response?.status,
+    };
+  }
+}
+
 
 
   // Get video analytics
