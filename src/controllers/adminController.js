@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Campaign = require('../models/Campaign');
 const Bid = require('../models/Bid');
 const Analytics = require('../models/Analytics');
+const Post = require('../models/Post');
 const logger = require('../utils/logger');
 const { HTTP_STATUS } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
@@ -188,6 +189,81 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { id } });
 });
 
+// Get posts by specific user (admin only)
+const getUserPosts = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const {
+    page = 1,
+    limit = 10,
+    status,
+    platform,
+    search,
+    sort = '-createdAt'
+  } = req.query;
+
+  // Validate user exists
+  const user = await User.findById(userId).select('name email role');
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  // Build query
+  const query = { author: userId };
+  if (status) query.status = status;
+  if (platform) query.platform = platform;
+  if (search) {
+    query.$or = [
+      { title: { $regex: search, $options: 'i' } },
+      { content: { $regex: search, $options: 'i' } }
+    ];
+  }
+
+  // Pagination
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const skip = (pageNum - 1) * limitNum;
+
+  // Sort options
+  let sortOption = { createdAt: -1 };
+  if (sort === 'recent') sortOption = { createdAt: -1 };
+  else if (sort === 'published') sortOption = { 'publishing.published_at': -1 };
+  else if (sort === 'title') sortOption = { title: 1 };
+
+  // Execute query
+  const [posts, total] = await Promise.all([
+    Post.find(query)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum)
+      .populate('author', 'name email role'),
+    Post.countDocuments(query)
+  ]);
+
+  logger.info('Admin fetched user posts', {
+    adminId: req.userId,
+    targetUserId: userId,
+    postCount: posts.length,
+    totalPosts: total
+  });
+
+  res.json({
+    success: true,
+    data: {
+      user,
+      posts,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum)
+      }
+    }
+  });
+});
+
 module.exports = {
   dashboardStats,
   listUsers,
@@ -197,7 +273,8 @@ module.exports = {
   getSettings,
   updateSettings,
   createUser,
-  deleteUser
+  deleteUser,
+  getUserPosts
 };
 
 
