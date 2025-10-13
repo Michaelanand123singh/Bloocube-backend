@@ -43,13 +43,16 @@ class CompetitorDataCollector {
       // YouTube
       if (hostname.includes('youtube.com')) {
         if (pathname.includes('/channel/')) {
-          const channelId = pathname.split('/channel/')[1];
+          const channelId = pathname.split('/channel/')[1]?.split('?')[0];
           return { platform: 'youtube', username: channelId, type: 'channel' };
-        } else if (pathname.includes('/c/') || pathname.includes('/user/')) {
-          const username = pathname.split('/').pop();
+        } else if (pathname.includes('/c/')) {
+          const username = pathname.split('/c/')[1]?.split('?')[0];
           return { platform: 'youtube', username, type: 'custom' };
+        } else if (pathname.includes('/user/')) {
+          const username = pathname.split('/user/')[1]?.split('?')[0];
+          return { platform: 'youtube', username, type: 'user' };
         } else if (pathname.includes('/@')) {
-          const username = pathname.replace('/@', '');
+          const username = pathname.split('/@')[1]?.split('?')[0];
           return { platform: 'youtube', username, type: 'handle' };
         }
       }
@@ -93,7 +96,18 @@ class CompetitorDataCollector {
         throw new Error(`Service not available for platform: ${platform}`);
       }
 
-      logger.info('Collecting competitor data', { platform, username, profileUrl });
+      logger.info('Collecting competitor data', { 
+        platform, 
+        username, 
+        profileUrl,
+        useEnvironmentCredentials: options.useEnvironmentCredentials,
+        fetchRealTimeData: options.fetchRealTimeData
+      });
+
+      // Initialize service with environment credentials if available
+      if (options.useEnvironmentCredentials && options.apiCredentials?.[platform]) {
+        await this.initializeServiceWithCredentials(service, platform, options.apiCredentials[platform]);
+      }
 
       // Get platform-specific data
       const profileData = await this.collectProfileData(service, platform, username, type, options);
@@ -197,7 +211,11 @@ class CompetitorDataCollector {
       };
     } catch (error) {
       logger.error('Twitter profile collection error:', { username, error: error.message });
-      throw error;
+      return {
+        error: error.message,
+        platform: 'twitter',
+        username: username
+      };
     }
   }
 
@@ -207,8 +225,17 @@ class CompetitorDataCollector {
   async collectInstagramProfile(service, username) {
     try {
       // Use Instagram Basic Display API or Graph API
-      const profile = await service.getUserProfile(username);
+      const profileResult = await service.getUserProfile(username);
       
+      if (!profileResult.success) {
+        return {
+          error: profileResult.error,
+          platform: 'instagram',
+          username: username
+        };
+      }
+      
+      const profile = profileResult.profile;
       return {
         id: profile.id,
         username: profile.username,
@@ -230,7 +257,11 @@ class CompetitorDataCollector {
       };
     } catch (error) {
       logger.error('Instagram profile collection error:', { username, error: error.message });
-      throw error;
+      return {
+        error: error.message,
+        platform: 'instagram',
+        username: username
+      };
     }
   }
 
@@ -239,31 +270,102 @@ class CompetitorDataCollector {
    */
   async collectYouTubeProfile(service, username, type) {
     try {
+      logger.info('Collecting YouTube profile:', { username, type });
+      
       let channelData;
       
       if (type === 'channel') {
+        logger.info('Using channel ID method:', { channelId: username });
         channelData = await service.getChannelById(username);
       } else {
+        logger.info('Using username search method:', { username, type });
         channelData = await service.getChannelByUsername(username);
       }
       
+      if (!channelData) {
+        throw new Error('No channel data returned');
+      }
+      
+      logger.info('YouTube channel data collected successfully:', { 
+        channelId: channelData.id, 
+        title: channelData.snippet?.title 
+      });
+      
       return {
         id: channelData.id,
+        username: channelData.snippet?.customUrl || username, // Use custom URL or fallback to username
+        name: channelData.snippet?.title,
         title: channelData.snippet?.title,
         description: channelData.snippet?.description,
         customUrl: channelData.snippet?.customUrl,
         publishedAt: channelData.snippet?.publishedAt,
         thumbnails: channelData.snippet?.thumbnails,
-        subscribers: channelData.statistics?.subscriberCount || 0,
-        videos: channelData.statistics?.videoCount || 0,
-        views: channelData.statistics?.viewCount || 0,
+        followers: parseInt(channelData.statistics?.subscriberCount) || 0, // Map subscribers to followers
+        subscribers: parseInt(channelData.statistics?.subscriberCount) || 0,
+        posts: parseInt(channelData.statistics?.videoCount) || 0, // Map videos to posts
+        videos: parseInt(channelData.statistics?.videoCount) || 0,
+        views: parseInt(channelData.statistics?.viewCount) || 0,
         country: channelData.snippet?.country,
         keywords: channelData.brandingSettings?.channel?.keywords,
-        uploads: channelData.contentDetails?.relatedPlaylists?.uploads
+        uploads: channelData.contentDetails?.relatedPlaylists?.uploads,
+        profileImage: channelData.snippet?.thumbnails?.default?.url,
+        isVerified: false, // YouTube doesn't provide verification status in basic API
+        website: null // YouTube doesn't provide website in basic API
       };
     } catch (error) {
       logger.error('YouTube profile collection error:', { username, type, error: error.message });
-      throw error;
+      return {
+        error: error.message,
+        platform: 'youtube',
+        username: username
+      };
+    }
+  }
+
+  /**
+   * Collect Facebook profile data
+   */
+  async collectFacebookProfile(service, username, type) {
+    try {
+      logger.info('Collecting Facebook profile:', { username, type });
+      
+      const pageData = await service.getPageByUsername(username);
+      
+      if (!pageData) {
+        throw new Error('No page data returned');
+      }
+      
+      logger.info('Facebook page data collected successfully:', { 
+        pageId: pageData.id, 
+        name: pageData.name 
+      });
+      
+      return {
+        id: pageData.id,
+        username: pageData.username || username,
+        name: pageData.name,
+        title: pageData.name,
+        description: pageData.about || pageData.description,
+        followers: parseInt(pageData.followers_count || pageData.fan_count) || 0,
+        following: 0, // Facebook pages don't have following count
+        posts: 0, // Will be calculated from content data
+        views: 0, // Not available in basic API
+        category: pageData.category,
+        website: pageData.website,
+        phone: pageData.phone,
+        location: pageData.location?.name,
+        profileImage: pageData.picture?.data?.url,
+        coverImage: pageData.cover?.source,
+        isVerified: pageData.verification_status || false,
+        createdAt: pageData.created_time
+      };
+    } catch (error) {
+      logger.error('Facebook profile collection error:', { username, type, error: error.message });
+      return {
+        error: error.message,
+        platform: 'facebook',
+        username: username
+      };
     }
   }
 
@@ -277,22 +379,60 @@ class CompetitorDataCollector {
     try {
       let posts = [];
       
+      console.log('Collecting content data for platform:', { platform, username, maxPosts, timePeriod });
+      
       switch (platform) {
         case 'twitter':
           posts = await service.getUserTweets(username, { max_results: maxPosts });
           break;
         case 'instagram':
-          posts = await service.getUserMedia(username, { limit: maxPosts });
+          const instagramResult = await service.getUserMedia(username, { limit: maxPosts });
+          posts = instagramResult.success ? instagramResult.media : [];
           break;
         case 'youtube':
-          posts = await service.getChannelVideos(username, { maxResults: maxPosts });
+          // For YouTube, we need to get the channel ID first if we don't have it
+          if (username.startsWith('UC') && username.length === 24) {
+            // This is already a channel ID
+            logger.info('Using channel ID for YouTube content collection:', { channelId: username });
+            posts = await service.getChannelVideos(username, { maxResults: maxPosts });
+          } else {
+            // This is a username/handle, we need to find the channel ID first
+            logger.info('Looking up channel ID for YouTube content collection:', { username });
+            try {
+              const channelData = await service.getChannelByUsername(username);
+              if (channelData && channelData.id) {
+                logger.info('Found channel ID, fetching videos:', { channelId: channelData.id });
+                posts = await service.getChannelVideos(channelData.id, { maxResults: maxPosts });
+              } else {
+                logger.warn('No channel data found for YouTube content collection:', { username });
+                posts = [];
+              }
+            } catch (error) {
+              logger.error('Failed to get channel ID for YouTube content collection:', { username, error: error.message });
+              posts = [];
+            }
+          }
           break;
         case 'linkedin':
-          posts = await service.getUserPosts(username, { count: maxPosts });
+          const linkedinResult = await service.getUserPosts(username, { count: maxPosts });
+          posts = linkedinResult.success ? linkedinResult.posts : [];
           break;
         case 'facebook':
           posts = await service.getPagePosts(username, { limit: maxPosts });
           break;
+      }
+
+      console.log('Posts collected:', { 
+        platform, 
+        postsCount: Array.isArray(posts) ? posts.length : 'not an array',
+        postsType: typeof posts,
+        firstPost: Array.isArray(posts) && posts[0] ? posts[0].id : 'no posts'
+      });
+
+      // Ensure posts is an array
+      if (!Array.isArray(posts)) {
+        console.error('Posts is not an array:', { posts, type: typeof posts });
+        posts = [];
       }
 
       // Filter posts by time period
@@ -371,6 +511,17 @@ class CompetitorDataCollector {
   calculateEngagementMetrics(contentData) {
     const posts = contentData.posts || [];
     
+    console.log('Calculating engagement metrics:', {
+      postsCount: posts.length,
+      firstPost: posts[0] ? {
+        id: posts[0].id,
+        like_count: posts[0].like_count,
+        comment_count: posts[0].comment_count,
+        retweet_count: posts[0].retweet_count,
+        public_metrics: posts[0].public_metrics
+      } : 'no posts'
+    });
+    
     if (posts.length === 0) {
       return {
         averageLikes: 0,
@@ -382,20 +533,44 @@ class CompetitorDataCollector {
     }
 
     const metrics = posts.reduce((acc, post) => {
-      acc.likes += post.like_count || post.favorite_count || 0;
-      acc.comments += post.comment_count || post.reply_count || 0;
-      acc.shares += post.retweet_count || post.share_count || 0;
+      // Handle different platform field names
+      const likes = post.like_count || post.favorite_count || post.likes || post.likeCount || 0;
+      const comments = post.comment_count || post.reply_count || post.comments || post.commentCount || 0;
+      const shares = post.retweet_count || post.share_count || post.shares || 0;
+      
+      acc.likes += likes;
+      acc.comments += comments;
+      acc.shares += shares;
+      
+      console.log('Post engagement:', {
+        postId: post.id,
+        likes,
+        comments,
+        shares,
+        total: likes + comments + shares
+      });
+      
       return acc;
     }, { likes: 0, comments: 0, shares: 0 });
 
     const totalEngagement = metrics.likes + metrics.comments + metrics.shares;
+    const averageEngagement = Math.round(totalEngagement / posts.length);
+
+    console.log('Engagement calculation result:', {
+      totalLikes: metrics.likes,
+      totalComments: metrics.comments,
+      totalShares: metrics.shares,
+      totalEngagement,
+      averageEngagement,
+      postsCount: posts.length
+    });
 
     return {
       averageLikes: Math.round(metrics.likes / posts.length),
       averageComments: Math.round(metrics.comments / posts.length),
       averageShares: Math.round(metrics.shares / posts.length),
       totalEngagement,
-      averageEngagement: Math.round(totalEngagement / posts.length),
+      averageEngagement,
       engagementTrend: this.calculateEngagementTrend(posts)
     };
   }
@@ -406,8 +581,23 @@ class CompetitorDataCollector {
   calculateEngagementRate(profileData, engagementData) {
     const followers = profileData.followers || profileData.subscribers || 1;
     const avgEngagement = engagementData.averageEngagement || 0;
+    const engagementRate = followers > 0 ? ((avgEngagement / followers) * 100).toFixed(2) : 0;
     
-    return followers > 0 ? ((avgEngagement / followers) * 100).toFixed(2) : 0;
+    console.log('Calculating engagement rate:', {
+      followers,
+      avgEngagement,
+      engagementRate,
+      profileData: {
+        followers: profileData.followers,
+        subscribers: profileData.subscribers
+      },
+      engagementData: {
+        averageEngagement: engagementData.averageEngagement,
+        totalEngagement: engagementData.totalEngagement
+      }
+    });
+    
+    return engagementRate;
   }
 
   /**
@@ -486,6 +676,86 @@ class CompetitorDataCollector {
       level: score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low',
       factors
     };
+  }
+
+  /**
+   * Initialize service with environment credentials
+   */
+  async initializeServiceWithCredentials(service, platform, credentials) {
+    try {
+      logger.info(`Initializing ${platform} service with credentials:`, {
+        platform,
+        hasClientId: !!credentials.clientId,
+        hasClientSecret: !!credentials.clientSecret,
+        hasApiKey: !!credentials.apiKey,
+        hasBearerToken: !!credentials.bearerToken,
+        isPlaceholder: credentials.clientId?.includes('YOUR_') || credentials.clientSecret?.includes('YOUR_') || credentials.apiKey?.includes('YOUR_') || credentials.bearerToken?.includes('YOUR_')
+      });
+
+      // Check required credentials based on platform
+      if (platform === 'youtube') {
+        if (!credentials.apiKey || credentials.apiKey.includes('YOUR_')) {
+          logger.warn(`Missing or invalid API key for ${platform}`, { hasApiKey: !!credentials.apiKey, isPlaceholder: credentials.apiKey?.includes('YOUR_') });
+          return;
+        }
+      } else if (platform === 'twitter') {
+        // Twitter can generate Bearer token from client credentials, so we only need client ID and secret
+        if (!credentials.clientId || !credentials.clientSecret || 
+            credentials.clientId.includes('YOUR_') || credentials.clientSecret.includes('YOUR_')) {
+          logger.warn(`Missing or invalid credentials for ${platform}`, { 
+            hasClientId: !!credentials.clientId, 
+            hasClientSecret: !!credentials.clientSecret,
+            isPlaceholder: credentials.clientId?.includes('YOUR_') || credentials.clientSecret?.includes('YOUR_')
+          });
+          return;
+        }
+        logger.info(`Twitter will generate Bearer token from client credentials`);
+      } else {
+        if (!credentials.clientId || !credentials.clientSecret || 
+            credentials.clientId.includes('YOUR_') || credentials.clientSecret.includes('YOUR_')) {
+          logger.warn(`Missing or invalid credentials for ${platform}`, { 
+            hasClientId: !!credentials.clientId, 
+            hasClientSecret: !!credentials.clientSecret,
+            isPlaceholder: credentials.clientId?.includes('YOUR_') || credentials.clientSecret?.includes('YOUR_')
+          });
+          return;
+        }
+      }
+
+            // Platform-specific initialization
+            switch (platform) {
+              case 'instagram':
+                if (service.setCredentials) {
+                  await service.setCredentials(credentials.clientId, credentials.clientSecret);
+                }
+                break;
+              case 'twitter':
+                if (service.setCredentials) {
+                  await service.setCredentials(credentials.clientId, credentials.clientSecret, credentials.bearerToken);
+                }
+                break;
+              case 'youtube':
+                if (service.setCredentials) {
+                  await service.setCredentials(credentials.clientId, credentials.clientSecret, credentials.apiKey);
+                }
+                break;
+              case 'linkedin':
+                if (service.setCredentials) {
+                  await service.setCredentials(credentials.clientId, credentials.clientSecret);
+                }
+                break;
+              case 'facebook':
+                if (service.setCredentials) {
+                  await service.setCredentials(credentials.clientId, credentials.clientSecret);
+                }
+                break;
+            }
+
+      logger.info(`Service initialized with credentials for ${platform}`);
+    } catch (error) {
+      logger.error(`Failed to initialize ${platform} service with credentials:`, error);
+      // Don't throw error, continue without credentials
+    }
   }
 
   /**

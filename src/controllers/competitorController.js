@@ -21,6 +21,7 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
     competitorUrls,
     campaignId,
     analysisType = 'comprehensive',
+    platforms = [],
     options = {}
   } = req.body;
 
@@ -37,6 +38,18 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
       success: false,
       message: 'Maximum 10 competitors can be analyzed at once'
     });
+  }
+
+  // Validate platforms if provided
+  const supportedPlatforms = ['instagram', 'twitter', 'youtube', 'linkedin', 'facebook'];
+  if (platforms.length > 0) {
+    const invalidPlatforms = platforms.filter(p => !supportedPlatforms.includes(p));
+    if (invalidPlatforms.length > 0) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        message: `Unsupported platforms: ${invalidPlatforms.join(', ')}`
+      });
+    }
   }
 
   try {
@@ -68,16 +81,50 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
     let freshDataResults = [];
     if (misses.length > 0) {
       logger.info('Collecting fresh competitor data from social media platforms', {
-        urlsToCollect: misses.length
+        urlsToCollect: misses.length,
+        platforms: platforms.length > 0 ? platforms : 'auto-detect',
+        useEnvironmentCredentials: options.useEnvironmentCredentials || true
       });
+      
+      // Enhanced collection options with environment credentials
+      const collectionOptions = {
+        maxPosts: options.maxPosts || 50,
+        timePeriodDays: options.timePeriodDays || 30,
+        concurrency: 3,
+        useEnvironmentCredentials: options.useEnvironmentCredentials || true,
+        platformSpecific: options.platformSpecific || true,
+        fetchRealTimeData: options.fetchRealTimeData || true,
+        platforms: platforms.length > 0 ? platforms : undefined,
+                apiCredentials: {
+                  // Pass environment credentials for real-time data fetching
+                  instagram: {
+                    clientId: process.env.INSTAGRAM_CLIENT_ID,
+                    clientSecret: process.env.INSTAGRAM_CLIENT_SECRET
+                  },
+                  twitter: {
+                    clientId: process.env.TWITTER_CLIENT_ID,
+                    clientSecret: process.env.TWITTER_CLIENT_SECRET,
+                    bearerToken: process.env.TWITTER_BEARER_TOKEN
+                  },
+                  youtube: {
+                    clientId: process.env.YOUTUBE_CLIENT_ID,
+                    clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
+                    apiKey: process.env.YOUTUBE_API_KEY
+                  },
+                  linkedin: {
+                    clientId: process.env.LINKEDIN_CLIENT_ID,
+                    clientSecret: process.env.LINKEDIN_CLIENT_SECRET
+                  },
+                  facebook: {
+                    clientId: process.env.FACEBOOK_APP_ID,
+                    clientSecret: process.env.FACEBOOK_APP_SECRET
+                  }
+                }
+      };
       
       freshDataResults = await competitorDataCollector.collectMultipleCompetitors(
         misses,
-        {
-          maxPosts: options.maxPosts || 50,
-          timePeriodDays: options.timePeriodDays || 30,
-          concurrency: 3
-        }
+        collectionOptions
       );
 
       // Cache the fresh data
@@ -91,7 +138,8 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
       if (Object.keys(freshDataMap).length > 0) {
         await competitorCache.setMultiple(freshDataMap, cacheOptions);
         logger.info('Fresh competitor data cached', {
-          cachedCount: Object.keys(freshDataMap).length
+          cachedCount: Object.keys(freshDataMap).length,
+          platformsUsed: platforms.length > 0 ? platforms : 'auto-detected'
         });
       }
     }
@@ -333,6 +381,174 @@ const getAnalysisResults = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Fetch competitor data without AI analysis (preview step)
+ */
+const fetchCompetitorData = asyncHandler(async (req, res) => {
+  const userId = req.userId;
+  const {
+    competitorUrl,
+    platform
+  } = req.body;
+
+  // Validation
+  if (!competitorUrl) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Competitor URL is required'
+    });
+  }
+
+  try {
+    logger.info('Fetching competitor data for preview', {
+      userId,
+      competitorUrl,
+      platform
+    });
+
+    // Parse the URL to extract platform and username
+    const { platform: detectedPlatform, username, type } = competitorDataCollector.parseProfileUrl(competitorUrl);
+    const targetPlatform = platform || detectedPlatform;
+
+    if (!targetPlatform) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        message: 'Unable to detect platform from URL'
+      });
+    }
+
+    // Get the appropriate service
+    const service = competitorDataCollector.services[targetPlatform];
+    if (!service) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        message: `Platform ${targetPlatform} is not supported`
+      });
+    }
+
+    // Initialize service with environment credentials
+    console.log('Environment variables check:', {
+      TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID ? `${process.env.TWITTER_CLIENT_ID.substring(0, 10)}...` : 'undefined',
+      TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET ? `${process.env.TWITTER_CLIENT_SECRET.substring(0, 10)}...` : 'undefined',
+      TWITTER_BEARER_TOKEN: process.env.TWITTER_BEARER_TOKEN ? `${process.env.TWITTER_BEARER_TOKEN.substring(0, 10)}...` : 'undefined'
+    });
+
+    const apiCredentials = {
+      instagram: {
+        clientId: process.env.INSTAGRAM_CLIENT_ID,
+        clientSecret: process.env.INSTAGRAM_CLIENT_SECRET
+      },
+      twitter: {
+        clientId: process.env.TWITTER_CLIENT_ID,
+        clientSecret: process.env.TWITTER_CLIENT_SECRET,
+        bearerToken: process.env.TWITTER_BEARER_TOKEN
+      },
+      youtube: {
+        clientId: process.env.YOUTUBE_CLIENT_ID,
+        clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
+        apiKey: process.env.YOUTUBE_API_KEY
+      },
+      linkedin: {
+        clientId: process.env.LINKEDIN_CLIENT_ID,
+        clientSecret: process.env.LINKEDIN_CLIENT_SECRET
+      },
+      facebook: {
+        clientId: process.env.FACEBOOK_APP_ID,
+        clientSecret: process.env.FACEBOOK_APP_SECRET
+      }
+    };
+
+    if (apiCredentials[targetPlatform]) {
+      console.log(`Passing credentials for ${targetPlatform}:`, {
+        platform: targetPlatform,
+        hasClientId: !!apiCredentials[targetPlatform].clientId,
+        hasClientSecret: !!apiCredentials[targetPlatform].clientSecret,
+        hasApiKey: !!apiCredentials[targetPlatform].apiKey,
+        hasBearerToken: !!apiCredentials[targetPlatform].bearerToken,
+        clientIdPreview: apiCredentials[targetPlatform].clientId ? `${apiCredentials[targetPlatform].clientId.substring(0, 10)}...` : 'none',
+        clientSecretPreview: apiCredentials[targetPlatform].clientSecret ? `${apiCredentials[targetPlatform].clientSecret.substring(0, 10)}...` : 'none'
+      });
+      
+      await competitorDataCollector.initializeServiceWithCredentials(
+        service, 
+        targetPlatform, 
+        apiCredentials[targetPlatform]
+      );
+    }
+
+    // Fetch profile data
+    const profileData = await competitorDataCollector.collectProfileData(
+      service, 
+      targetPlatform, 
+      username, 
+      type, 
+      { useEnvironmentCredentials: true }
+    );
+
+    // Fetch recent content (limited for preview)
+    // For YouTube, we need to use the channel ID from the profile data
+    const contentUsername = targetPlatform === 'youtube' && profileData.id ? profileData.id : username;
+    const contentData = await competitorDataCollector.collectContentData(
+      service, 
+      targetPlatform, 
+      contentUsername, 
+      { maxPosts: 10, timePeriodDays: 7 }
+    );
+
+    // Calculate basic engagement metrics
+    const engagementData = competitorDataCollector.calculateEngagementMetrics(contentData);
+
+    // Structure the preview data
+    const previewData = {
+      profile: {
+        platform: targetPlatform,
+        username,
+        profileUrl: competitorUrl,
+        ...profileData
+      },
+      content: {
+        recentPosts: contentData.posts || [],
+        totalPosts: contentData.totalPosts || 0,
+        averagePostsPerWeek: contentData.averagePostsPerWeek || 0,
+        contentTypes: contentData.contentTypes || {},
+        topHashtags: contentData.topHashtags || []
+      },
+      engagement: {
+        ...engagementData,
+        engagementRate: competitorDataCollector.calculateEngagementRate(profileData, engagementData)
+      },
+      dataQuality: competitorDataCollector.assessDataQuality(profileData, contentData, engagementData),
+      fetchedAt: new Date()
+    };
+
+    logger.info('Competitor data fetched successfully', {
+      userId,
+      platform: targetPlatform,
+      username,
+      dataQuality: previewData.dataQuality.level
+    });
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      data: previewData
+    });
+
+  } catch (error) {
+    logger.error('Failed to fetch competitor data:', {
+      userId,
+      competitorUrl,
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Failed to fetch competitor data',
+      error: error.message
+    });
+  }
+});
+
+/**
  * Get user's competitor analysis history
  */
 const getAnalysisHistory = asyncHandler(async (req, res) => {
@@ -397,5 +613,6 @@ module.exports = {
   analyzeCompetitors,
   getAnalysisResults,
   getAnalysisHistory,
-  deleteAnalysis
+  deleteAnalysis,
+  fetchCompetitorData
 };

@@ -7,11 +7,28 @@ class YouTubeService {
   constructor() {
     this.clientId = config.YOUTUBE_CLIENT_ID;
     this.clientSecret = config.YOUTUBE_CLIENT_SECRET;
+    this.apiKey = config.YOUTUBE_API_KEY;
     this.baseURL = 'https://www.googleapis.com/youtube/v3';
     this.uploadURL = 'https://www.googleapis.com/upload/youtube/v3/videos'; 
     this.authURL = 'https://accounts.google.com/o/oauth2/v2/auth';
     this.tokenURL = 'https://oauth2.googleapis.com/token';
     this.codeVerifiers = new Map(); // Store code verifiers temporarily
+    
+    console.log('YouTube service initialized:', { 
+      hasClientId: !!this.clientId, 
+      hasClientSecret: !!this.clientSecret,
+      hasApiKey: !!this.apiKey,
+      apiKeyPreview: this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'none'
+    });
+  }
+
+  // Method to set credentials dynamically
+  setCredentials(clientId, clientSecret, apiKey = null) {
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
+    if (apiKey) {
+      this.apiKey = apiKey;
+    }
   }
 
 
@@ -387,6 +404,173 @@ async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [],
         error: error.response?.data?.error?.message || 'Failed to get video analytics',
         statusCode,
       };
+    }
+  }
+
+  // Get channel by username/handle (for competitor analysis)
+  async getChannelByUsername(username) {
+    try {
+      if (!this.apiKey) {
+        throw new Error('YouTube API key not configured');
+      }
+
+      console.log('Searching for YouTube channel:', { username, apiKey: this.apiKey ? 'configured' : 'missing' });
+
+      // First try to search for the channel by custom URL or handle
+      const searchResponse = await axios.get(`${this.baseURL}/search`, {
+        params: {
+          part: 'snippet',
+          q: username,
+          type: 'channel',
+          maxResults: 1,
+          key: this.apiKey
+        }
+      });
+
+      console.log('YouTube search response:', { 
+        itemsFound: searchResponse.data.items?.length || 0,
+        searchTerm: username 
+      });
+
+      if (searchResponse.data.items && searchResponse.data.items.length > 0) {
+        const channelId = searchResponse.data.items[0].id.channelId;
+        
+        // Now get the full channel details
+        const channelResponse = await axios.get(`${this.baseURL}/channels`, {
+          params: {
+            part: 'snippet,statistics,contentDetails,brandingSettings',
+            id: channelId,
+            key: this.apiKey
+          }
+        });
+
+        if (channelResponse.data.items && channelResponse.data.items.length > 0) {
+          return channelResponse.data.items[0];
+        }
+      }
+
+      // Fallback: try the old forUsername method (deprecated but might still work for some channels)
+      try {
+        const response = await axios.get(`${this.baseURL}/channels`, {
+          params: {
+            part: 'snippet,statistics,contentDetails,brandingSettings',
+            forUsername: username,
+            key: this.apiKey
+          }
+        });
+
+        if (response.data.items && response.data.items.length > 0) {
+          return response.data.items[0];
+        }
+      } catch (fallbackError) {
+        // Ignore fallback error, we'll throw the main error
+      }
+
+      throw new Error('Channel not found');
+    } catch (error) {
+      console.error('YouTube channel fetch error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error?.message || 'Failed to get channel');
+    }
+  }
+
+  // Get channel by ID (for competitor analysis)
+  async getChannelById(channelId) {
+    try {
+      if (!this.apiKey) {
+        throw new Error('YouTube API key not configured');
+      }
+
+      const response = await axios.get(`${this.baseURL}/channels`, {
+        params: {
+          part: 'snippet,statistics,contentDetails,brandingSettings',
+          id: channelId,
+          key: this.apiKey
+        }
+      });
+
+      if (response.data.items && response.data.items.length > 0) {
+        return response.data.items[0];
+      } else {
+        throw new Error('Channel not found');
+      }
+    } catch (error) {
+      console.error('YouTube channel fetch error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error?.message || 'Failed to get channel');
+    }
+  }
+
+  // Get channel videos (for competitor analysis)
+  async getChannelVideos(channelId, options = {}) {
+    try {
+      if (!this.apiKey) {
+        throw new Error('YouTube API key not configured');
+      }
+
+      console.log('Fetching YouTube videos for channel:', { channelId, maxResults: options.maxResults || 10 });
+
+      // First, get the list of videos
+      const searchResponse = await axios.get(`${this.baseURL}/search`, {
+        params: {
+          part: 'snippet',
+          channelId: channelId,
+          type: 'video',
+          order: 'date',
+          maxResults: options.maxResults || 10,
+          key: this.apiKey
+        }
+      });
+
+      const videos = searchResponse.data.items || [];
+      console.log('Found YouTube videos:', { count: videos.length });
+
+      if (videos.length === 0) {
+        return [];
+      }
+
+      // Get video IDs for detailed statistics
+      const videoIds = videos.map(video => video.id.videoId).join(',');
+      
+      // Fetch detailed video statistics
+      const detailsResponse = await axios.get(`${this.baseURL}/videos`, {
+        params: {
+          part: 'snippet,statistics,contentDetails',
+          id: videoIds,
+          key: this.apiKey
+        }
+      });
+
+      const videoDetails = detailsResponse.data.items || [];
+      console.log('Fetched video details:', { count: videoDetails.length });
+
+      // Combine search results with detailed statistics
+      const enrichedVideos = videos.map(video => {
+        const details = videoDetails.find(detail => detail.id === video.id.videoId);
+        return {
+          id: video.id.videoId,
+          title: video.snippet.title,
+          description: video.snippet.description,
+          publishedAt: video.snippet.publishedAt,
+          thumbnails: video.snippet.thumbnails,
+          channelId: video.snippet.channelId,
+          channelTitle: video.snippet.channelTitle,
+          // Add engagement metrics
+          viewCount: parseInt(details?.statistics?.viewCount) || 0,
+          likeCount: parseInt(details?.statistics?.likeCount) || 0,
+          commentCount: parseInt(details?.statistics?.commentCount) || 0,
+          duration: details?.contentDetails?.duration,
+          // Map to common format
+          likes: parseInt(details?.statistics?.likeCount) || 0,
+          comments: parseInt(details?.statistics?.commentCount) || 0,
+          views: parseInt(details?.statistics?.viewCount) || 0,
+          created_time: video.snippet.publishedAt,
+          created_at: video.snippet.publishedAt
+        };
+      });
+
+      return enrichedVideos;
+    } catch (error) {
+      console.error('YouTube videos fetch error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.error?.message || 'Failed to get channel videos');
     }
   }
 }

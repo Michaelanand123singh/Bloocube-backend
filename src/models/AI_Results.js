@@ -249,6 +249,9 @@ aiResultsSchema.virtual('isExpired').get(function() {
 
 // Virtual for high priority recommendations
 aiResultsSchema.virtual('highPriorityRecommendations').get(function() {
+  if (!this.content || !this.content.recommendations || !Array.isArray(this.content.recommendations)) {
+    return [];
+  }
   return this.content.recommendations.filter(rec => rec.priority === 'high' || rec.priority === 'critical');
 });
 
@@ -305,6 +308,9 @@ aiResultsSchema.statics.cleanupExpired = function() {
 
 // Instance method to mark as helpful
 aiResultsSchema.methods.markAsHelpful = function() {
+  if (!this.feedback) {
+    this.feedback = {};
+  }
   this.feedback.was_helpful = true;
   this.feedback.user_rating = Math.max(this.feedback.user_rating || 0, 4);
   return this.save();
@@ -312,6 +318,9 @@ aiResultsSchema.methods.markAsHelpful = function() {
 
 // Instance method to add feedback
 aiResultsSchema.methods.addFeedback = function(rating, comments) {
+  if (!this.feedback) {
+    this.feedback = {};
+  }
   this.feedback.user_rating = rating;
   this.feedback.user_comments = comments;
   this.feedback.was_helpful = rating >= 4;
@@ -320,6 +329,9 @@ aiResultsSchema.methods.addFeedback = function(rating, comments) {
 
 // Instance method to track implementation
 aiResultsSchema.methods.trackImplementation = function(suggestions) {
+  if (!this.feedback) {
+    this.feedback = {};
+  }
   this.feedback.suggestions_implemented = suggestions;
   return this.save();
 };

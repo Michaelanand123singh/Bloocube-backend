@@ -11,6 +11,12 @@ class LinkedInService {
     this.apiBase = 'https://api.linkedin.com/v2';
   }
 
+  // Method to set credentials dynamically
+  setCredentials(clientId, clientSecret) {
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
+  }
+
   generateAuthURL(redirectUri, state) {
     const params = new URLSearchParams({
       response_type: 'code',
@@ -217,6 +223,46 @@ class LinkedInService {
       return {
         success: false,
         error: error.response?.data?.message || 'Failed to post to LinkedIn',
+      };
+    }
+  }
+
+  // Get user profile by username (for competitor analysis)
+  async getUserProfile(username) {
+    try {
+      // LinkedIn API requires user ID, not username
+      // This is a simplified version - in reality, you'd need proper authentication
+      return {
+        success: false,
+        error: 'LinkedIn profile lookup requires proper API authentication and user ID',
+        username: username,
+        platform: 'linkedin'
+      };
+    } catch (error) {
+      console.error('LinkedIn profile fetch error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.error?.message || 'Failed to get profile'
+      };
+    }
+  }
+
+  // Get user posts (for competitor analysis)
+  async getUserPosts(username, options = {}) {
+    try {
+      // LinkedIn API requires user ID and proper authentication
+      // This is a simplified version
+      return {
+        success: false,
+        error: 'LinkedIn posts collection requires proper API authentication and user ID',
+        username: username,
+        platform: 'linkedin'
+      };
+    } catch (error) {
+      console.error('LinkedIn posts fetch error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.error?.message || 'Failed to get posts'
       };
     }
   }

@@ -27,18 +27,19 @@ const config = {
   EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@bloocube.com',
   
   // Social Media API Keys
-  INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID,
-  INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET,
+  INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID || '1267511308478797',
+  INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET || '9342a533439a90031466591c8ee0e781',
   // Use Facebook Login scopes for Instagram Business (Graph API)
   // If you need messaging/content publish add: instagram_manage_messages, instagram_content_publish, pages_manage_metadata
   INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'instagram_basic,instagram_manage_insights,instagram_manage_comments,pages_show_list,pages_read_engagement',
-  FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
-  FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET,
+  FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID || '1267511308478797',
+  FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET || '9342a533439a90031466591c8ee0e781',
   TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID,
   TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET,
-  TWITTER_APP_KEY:process.env.TWITTER_APP_KEY,
-TWITTER_APP_SECRET: process.env.TWITTER_APP_SECRET,
-TWITTER_CALLBACK_URL: process.env.TWITTER_CALLBACK_URL,
+  TWITTER_BEARER_TOKEN: process.env.TWITTER_BEARER_TOKEN,
+  TWITTER_APP_KEY: process.env.TWITTER_APP_KEY,
+  TWITTER_APP_SECRET: process.env.TWITTER_APP_SECRET,
+  TWITTER_CALLBACK_URL: process.env.TWITTER_CALLBACK_URL,
   LINKEDIN_CLIENT_ID: process.env.LINKEDIN_CLIENT_ID,
   LINKEDIN_CLIENT_SECRET: process.env.LINKEDIN_CLIENT_SECRET,
   LINKEDIN_SCOPES: process.env.LINKEDIN_SCOPES || 'openid profile email w_member_social',
@@ -49,6 +50,7 @@ TWITTER_CALLBACK_URL: process.env.TWITTER_CALLBACK_URL,
   GOOGLE_SCOPES: process.env.GOOGLE_SCOPES || 'openid email profile',
   YOUTUBE_CLIENT_ID: process.env.YOUTUBE_CLIENT_ID,
   YOUTUBE_CLIENT_SECRET: process.env.YOUTUBE_CLIENT_SECRET,
+  YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY,
   
   // Twitter OAuth
   TWITTER_SCOPES: process.env.TWITTER_SCOPES || 'tweet.read tweet.write users.read offline.access',

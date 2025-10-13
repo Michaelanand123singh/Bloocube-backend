@@ -5,6 +5,7 @@ const { aiServiceLimiter } = require('../middlewares/rateLimiter');
 const competitorController = require('../controllers/competitorController');
 
 // Competitor Analysis Routes
+router.post('/fetch', authenticate, competitorController.fetchCompetitorData);
 router.post('/analyze', authenticate, aiServiceLimiter, competitorController.analyzeCompetitors);
 router.get('/analysis/:analysisId', authenticate, competitorController.getAnalysisResults);
 router.get('/history', authenticate, competitorController.getAnalysisHistory);
