@@ -39,12 +39,70 @@ const userSchema = new mongoose.Schema({
       type: String,
       default: ''
     },
+    phone: {
+      type: String,
+      match: [/^[\+]?[1-9][\d]{0,15}$/, 'Please enter a valid phone number'],
+      default: ''
+    },
+    location: {
+      type: String,
+      maxlength: [100, 'Location cannot exceed 100 characters'],
+      default: ''
+    },
+    website: {
+      type: String,
+      match: [/^https?:\/\/.+/, 'Please enter a valid website URL'],
+      default: ''
+    },
+    dateOfBirth: {
+      type: Date,
+      default: null
+    },
+    gender: {
+      type: String,
+      enum: ['male', 'female', 'other', 'prefer_not_to_say'],
+      default: 'prefer_not_to_say'
+    },
+    language: {
+      type: String,
+      default: 'en'
+    },
+    timezone: {
+      type: String,
+      default: 'UTC'
+    },
     social_links: {
       youtube: String,
       instagram: String,
       twitter: String,
       linkedin: String,
       facebook: String,
+      tiktok: String,
+      snapchat: String,
+      website: String
+    },
+    preferences: {
+      emailNotifications: {
+        type: Boolean,
+        default: true
+      },
+      pushNotifications: {
+        type: Boolean,
+        default: true
+      },
+      smsNotifications: {
+        type: Boolean,
+        default: false
+      },
+      marketingEmails: {
+        type: Boolean,
+        default: true
+      },
+      profileVisibility: {
+        type: String,
+        enum: ['public', 'private', 'followers_only'],
+        default: 'public'
+      }
     }
   },
   isActive: {

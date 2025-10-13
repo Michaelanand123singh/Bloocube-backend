@@ -11,7 +11,7 @@ router.post('/login', (process.env.NODE_ENV === 'production' ? authLimiter : (re
 
 router.get('/me', authenticate, ctrl.getProfile);
 router.put('/me', authenticate, validateWithJoi(userValidation.updateProfile), ctrl.updateProfile);
-router.post('/change-password', authenticate, ctrl.changePassword);
+// Note: Password change moved to /api/profile/change-password
 
 router.post('/request-password-reset', passwordResetLimiter, ctrl.requestPasswordReset);
 router.post('/reset-password/:token', validatePasswordResetToken, ctrl.resetPassword);

@@ -200,41 +200,8 @@ const updateProfile = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * Change password
- */
-const changePassword = asyncHandler(async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  const userId = req.userId;
-
-  const user = await User.findById(userId).select('+password');
-  if (!user) {
-    return res.status(HTTP_STATUS.NOT_FOUND).json({
-      success: false,
-      message: ERROR_MESSAGES.USER_NOT_FOUND
-    });
-  }
-
-  // Verify current password
-  const isCurrentPasswordValid = await user.comparePassword(currentPassword);
-  if (!isCurrentPasswordValid) {
-    return res.status(HTTP_STATUS.BAD_REQUEST).json({
-      success: false,
-      message: 'Current password is incorrect'
-    });
-  }
-
-  // Update password
-  user.password = newPassword;
-  await user.save();
-
-  logger.info('Password changed successfully', { userId });
-
-  res.json({
-    success: true,
-    message: 'Password changed successfully'
-  });
-});
+// Note: Password change functionality moved to profileController.js
+// This endpoint is deprecated - use /api/profile/change-password instead
 
 // ...existing code...
 const emailService = require('../services/notifier/email');
@@ -395,7 +362,6 @@ module.exports = {
   login,
   getProfile,
   updateProfile,
-  changePassword,
   requestPasswordReset,
   resetPassword,
   logout,

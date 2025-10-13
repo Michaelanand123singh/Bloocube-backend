@@ -13,6 +13,7 @@ const logger = require("./utils/logger");
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
+const profileRoutes = require("./routes/profile.routes");
 const campaignRoutes = require("./routes/campaign.routes");
 const bidRoutes = require("./routes/bid.routes");
 const analyticsRoutes = require("./routes/analytics.routes");
@@ -112,6 +113,7 @@ app.options("/cors-test", (req, res) => {
 
 // API routes
 app.use("/api/auth", authRoutes);
+app.use("/api/profile", profileRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/bids", bidRoutes);
 app.use("/api/analytics", analyticsRoutes);

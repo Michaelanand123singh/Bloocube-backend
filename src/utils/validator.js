@@ -43,18 +43,45 @@ const userValidation = {
 
   updateProfile: Joi.object({
     name: commonSchemas.name.optional(),
+    email: commonSchemas.email.optional(),
     profile: Joi.object({
       bio: Joi.string().max(500).optional(),
       avatar_url: Joi.string().uri().optional(),
+      phone: commonSchemas.phone.optional(),
+      location: Joi.string().max(100).optional(),
+      website: Joi.string().uri().optional(),
+      dateOfBirth: Joi.date().max('now').optional(),
+      gender: Joi.string().valid('male', 'female', 'other', 'prefer_not_to_say').optional(),
+      language: Joi.string().length(2).optional(),
+      timezone: Joi.string().optional(),
       social_links: Joi.object({
         youtube: Joi.string().uri().optional(),
         instagram: Joi.string().uri().optional(),
         twitter: Joi.string().uri().optional(),
         linkedin: Joi.string().uri().optional(),
-        facebook: Joi.string().uri().optional()
+        facebook: Joi.string().uri().optional(),
+        tiktok: Joi.string().uri().optional(),
+        snapchat: Joi.string().uri().optional(),
+        website: Joi.string().uri().optional()
+      }).optional(),
+      preferences: Joi.object({
+        emailNotifications: Joi.boolean().optional(),
+        pushNotifications: Joi.boolean().optional(),
+        smsNotifications: Joi.boolean().optional(),
+        marketingEmails: Joi.boolean().optional(),
+        profileVisibility: Joi.string().valid('public', 'private', 'followers_only').optional()
       }).optional()
     }).optional()
-  }).min(1)
+  }).min(1),
+
+  changePassword: Joi.object({
+    currentPassword: Joi.string().required(),
+    newPassword: commonSchemas.password
+  }),
+
+  deleteAccount: Joi.object({
+    password: Joi.string().required()
+  })
 };
 
 // Campaign validation schemas
