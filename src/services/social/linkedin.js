@@ -228,7 +228,7 @@ class LinkedInService {
   }
 
   // Get user profile by username (for competitor analysis)
-  async getUserProfile(username) {
+  async getUserProfilebyusernme(username) {
     try {
       // LinkedIn API requires user ID, not username
       // This is a simplified version - in reality, you'd need proper authentication

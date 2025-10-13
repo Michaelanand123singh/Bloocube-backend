@@ -98,8 +98,9 @@ class LinkedInController {
    * @route GET /api/auth/linkedin/callback
    */
   async handleCallback(req, res) {
-    // Frontend URL for redirection
-    const redirectToFrontend = process.env.FRONTEND_URL || 'http://localhost:3000/creator/settings';
+    // Frontend URL for redirection - ensure it points to creator settings
+    const baseFrontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const redirectToFrontend = `${baseFrontendUrl}/creator/settings`;
     
     try {
       const { code, state, error, error_description } = req.query;
@@ -184,7 +185,7 @@ class LinkedInController {
         }
       };
 
-      await User.findByIdAndUpdate(
+      const updatedUser = await User.findByIdAndUpdate(
         decoded.userId,
         { $set: updateData },
         { 
@@ -195,8 +196,18 @@ class LinkedInController {
 
       console.log('✅ LinkedIn account connected successfully');
 
-      // STEP 4: Redirect to frontend with success
-      return res.redirect(`${redirectToFrontend}?linkedin=success`);
+      // STEP 4: Generate session token for auto-login
+      const jwtManager = require('../utils/jwt');
+      const sessionToken = jwtManager.generateAccessToken({
+        id: updatedUser._id,
+        email: updatedUser.email,
+        role: updatedUser.role
+      });
+
+      console.log('🔑 Session token generated for auto-login');
+
+      // STEP 5: Redirect to frontend with success and session token
+      return res.redirect(`${redirectToFrontend}?linkedin=success&token=${encodeURIComponent(sessionToken)}&message=LinkedIn+connected+and+logged+in+successfully`);
 
     } catch (error) {
       console.error('❌ LinkedIn callback error:', error);
