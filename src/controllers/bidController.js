@@ -58,6 +58,14 @@ const createBid = asyncHandler(async (req, res) => {
   campaign.analytics.totalApplications += 1;
   await campaign.save();
 
+  // Create notification for admin users
+  try {
+    const NotificationService = require('../services/notificationService');
+    await NotificationService.notifyBidReceived(bid, campaign);
+  } catch (e) {
+    logger.error('Failed to create bid notification', e);
+  }
+
   logger.info('Bid created', { bidId: bid._id, campaignId: campaign_id, creatorId });
 
   res.status(HTTP_STATUS.CREATED).json({

@@ -61,6 +61,14 @@ const register = asyncHandler(async (req, res) => {
     logger.error('Failed to send verification email', e);
   }
 
+  // Create notification for admin users
+  try {
+    const NotificationService = require('../services/notificationService');
+    await NotificationService.notifyUserRegistration(user);
+  } catch (e) {
+    logger.error('Failed to create user registration notification', e);
+  }
+
   logger.info('User registered successfully', { userId: user._id, email: user.email });
 
   res.status(HTTP_STATUS.CREATED).json({

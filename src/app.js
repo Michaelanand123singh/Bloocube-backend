@@ -26,6 +26,7 @@ const instagramRoutes = require("./routes/instagram.routes");
 const facebookRoutes = require("./routes/facebook.routes");
 const postRoutes = require("./routes/post.routes");
 const competitorRoutes = require("./routes/competitor.routes");
+const notificationRoutes = require("./routes/notification.routes");
 
 const app = express();
 
@@ -124,6 +125,7 @@ app.use("/api/instagram", instagramRoutes);
 app.use("/api/facebook", facebookRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/competitor", competitorRoutes);
+app.use("/api/notifications", notificationRoutes);
 const aiProviderRoutes = require('./routes/aiProvider.routes');
 app.use("/api/admin/ai-providers", aiProviderRoutes);
 const healthRoutes = require("./routes/health.routes");
