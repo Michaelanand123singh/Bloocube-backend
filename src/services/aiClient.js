@@ -25,8 +25,61 @@ const handle = async (method, url, data) => {
 };
 
 module.exports = {
-  // Competitor Analysis - Updated for new stateless flow
-  competitorAnalysis: (payload) => handle('post', '/ai/competitor-analysis', payload),
+  // Competitor Analysis - Enhanced for new AI services API
+  competitorAnalysis: async (payload) => {
+    try {
+      logger.info('Sending competitor analysis request to AI services', {
+        userId: payload.user_id,
+        competitorsCount: payload.competitors_data?.length || 0,
+        analysisType: payload.analysis_type
+      });
+      
+      const response = await handle('post', '/ai/competitor-analysis/', payload);
+      
+      logger.info('Competitor analysis completed successfully', {
+        userId: payload.user_id,
+        processingTime: response.processing_time_ms,
+        confidenceScore: response.confidence_score
+      });
+      
+      return response;
+    } catch (error) {
+      logger.error('Competitor analysis failed', {
+        userId: payload.user_id,
+        error: error.message,
+        status: error.response?.status
+      });
+      throw error;
+    }
+  },
+  
+  // Enhanced Competitor Analysis with Real-time Data
+  competitorAnalysisWithRealtime: async (payload) => {
+    try {
+      logger.info('Sending enhanced competitor analysis with real-time data', {
+        userId: payload.user_id,
+        competitorsCount: payload.competitors_data?.length || 0,
+        includeRealtime: payload.analysis_options?.include_realtime_data
+      });
+      
+      // Use the standard endpoint but with enhanced payload
+      const response = await handle('post', '/ai/competitor-analysis/', payload);
+      
+      logger.info('Enhanced competitor analysis completed', {
+        userId: payload.user_id,
+        processingTime: response.processing_time_ms,
+        realtimeDataIncluded: response.realtime_data_included
+      });
+      
+      return response;
+    } catch (error) {
+      logger.error('Enhanced competitor analysis failed', {
+        userId: payload.user_id,
+        error: error.message
+      });
+      throw error;
+    }
+  },
   
   // Content Suggestions
   suggestions: (payload) => handle('post', '/ai/suggestions', payload),

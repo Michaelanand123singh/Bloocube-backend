@@ -11,4 +11,7 @@ router.get('/analysis/:analysisId', authenticate, competitorController.getAnalys
 router.get('/history', authenticate, competitorController.getAnalysisHistory);
 router.delete('/analysis/:analysisId', authenticate, competitorController.deleteAnalysis);
 
+// AI Services Test Route
+router.get('/test-ai', authenticate, competitorController.testAIServices);
+
 module.exports = router;

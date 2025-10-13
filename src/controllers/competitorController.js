@@ -8,6 +8,78 @@ const { asyncHandler } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
 
 /**
+ * Create a basic analysis response when AI services are unavailable
+ */
+const createBasicAnalysisResponse = (competitorsData, analysisType) => {
+  const competitors = competitorsData.map(data => ({
+    platform: data.profile.platform,
+    username: data.profile.username,
+    profile_url: data.profile.profileUrl,
+    verified: data.profile.verified || false,
+    key_metrics: {
+      followers: data.profile.followers || 0,
+      engagement_rate: data.engagement.engagementRate || 0,
+      posts_analyzed: data.content.totalPosts || 0,
+      average_likes: data.engagement.averageLikes || 0,
+      average_comments: data.engagement.averageComments || 0,
+      average_shares: data.engagement.averageShares || 0,
+      growth_rate: data.engagement.growthRate || 0
+    },
+    content_analysis: {
+      total_posts: data.content.totalPosts || 0,
+      posts_per_week: data.content.averagePostsPerWeek || 0,
+      content_types: data.content.contentTypes || {},
+      top_hashtags: data.content.topHashtags || [],
+      posting_schedule: data.content.postingSchedule || {}
+    },
+    engagement_metrics: {
+      engagement_rate: data.engagement.engagementRate || 0,
+      average_likes: data.engagement.averageLikes || 0,
+      average_comments: data.engagement.averageComments || 0,
+      average_shares: data.engagement.averageShares || 0,
+      growth_rate: data.engagement.growthRate || 0
+    },
+    audience_insights: data.audience || {},
+    data_quality: data.dataQuality || { level: 'medium', score: 50 }
+  }));
+
+  return {
+    results: {
+      competitors: competitors,
+      market_insights: {
+        total_competitors: competitors.length,
+        platforms_analyzed: [...new Set(competitors.map(c => c.platform))],
+        average_engagement: competitors.reduce((sum, c) => sum + c.key_metrics.engagement_rate, 0) / competitors.length,
+        analysis_note: 'Basic analysis performed - AI services unavailable'
+      },
+      benchmark_metrics: {
+        engagement_benchmark: competitors.reduce((sum, c) => sum + c.key_metrics.engagement_rate, 0) / competitors.length,
+        follower_benchmark: competitors.reduce((sum, c) => sum + c.key_metrics.followers, 0) / competitors.length
+      },
+      competitive_landscape: {
+        top_performers: competitors.sort((a, b) => b.key_metrics.engagement_rate - a.key_metrics.engagement_rate).slice(0, 3),
+        analysis_type: analysisType
+      },
+      recommendations: [
+        'AI-powered insights temporarily unavailable',
+        'Basic competitor data collected successfully',
+        'Try again later for enhanced AI analysis'
+      ],
+      ai_insights: {
+        status: 'offline_mode',
+        message: 'AI services are currently unavailable. Basic analysis provided.',
+        fallback_used: true
+      }
+    },
+    model_version: 'basic-fallback-v1.0',
+    processing_time_ms: 100,
+    confidence_score: 0.7,
+    status: 'completed',
+    fallback_mode: true
+  };
+};
+
+/**
  * Analyze competitors - Recommended Flow Implementation
  * 1. Frontend sends competitor profile URLs
  * 2. Backend collects profile data from social media platforms
@@ -214,14 +286,72 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
         include_engagement_analysis: options.includeEngagementAnalysis !== false,
         include_audience_analysis: options.includeAudienceAnalysis !== false,
         include_competitive_insights: options.includeCompetitiveInsights !== false,
-        include_recommendations: options.includeRecommendations !== false
+        include_recommendations: options.includeRecommendations !== false,
+        include_realtime_data: options.fetchRealTimeData === true,
+        max_posts: options.maxPosts || 30,
+        time_period_days: options.timePeriodDays || 30,
+        platform_specific: options.platformSpecific === true
+      },
+      metadata: {
+        total_competitors: successfulData.length,
+        platforms_analyzed: [...new Set(successfulData.map(d => d.profile.platform))],
+        data_collection_timestamp: new Date().toISOString(),
+        analysis_request_id: `comp_${Date.now()}_${userId}`
       },
       collected_at: new Date().toISOString()
     };
 
     // Step 3: Send structured data to AI Services for analysis
-    logger.info('Sending data to AI Services for analysis');
-    const aiResponse = await aiClient.competitorAnalysis(aiAnalysisPayload);
+    logger.info('Sending data to AI Services for analysis', {
+      userId,
+      competitorsCount: successfulData.length,
+      analysisType: analysisType
+    });
+    
+    // Use enhanced AI analysis if real-time data is requested
+    const useEnhancedAnalysis = options.fetchRealTimeData === true;
+    let aiResponse;
+    
+    try {
+      aiResponse = useEnhancedAnalysis 
+        ? await aiClient.competitorAnalysisWithRealtime(aiAnalysisPayload)
+        : await aiClient.competitorAnalysis(aiAnalysisPayload);
+    } catch (aiError) {
+      logger.error('AI Services request failed', {
+        userId,
+        error: aiError.message,
+        status: aiError.response?.status,
+        endpoint: aiError.config?.url,
+        useEnhanced: useEnhancedAnalysis
+      });
+      
+      // If enhanced analysis fails, try standard analysis as fallback
+      if (useEnhancedAnalysis) {
+        logger.info('Falling back to standard AI analysis');
+        try {
+          aiResponse = await aiClient.competitorAnalysis(aiAnalysisPayload);
+        } catch (fallbackError) {
+          logger.error('Both enhanced and standard AI analysis failed', {
+            userId,
+            enhancedError: aiError.message,
+            standardError: fallbackError.message
+          });
+          throw fallbackError;
+        }
+      } else {
+        // If AI services are completely down, create a basic analysis response
+        if (aiError.response?.status === 500 || aiError.message.includes('timeout')) {
+          logger.warn('AI Services appear to be down, creating basic analysis response', {
+            userId,
+            error: aiError.message
+          });
+          
+          aiResponse = createBasicAnalysisResponse(successfulData, analysisType);
+        } else {
+          throw aiError;
+        }
+      }
+    }
 
     // Step 4: Store results in database
     const aiResultRecord = await AIResults.create({
@@ -249,7 +379,9 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
         competitors_analyzed: successfulData.length,
         data_quality_score: Math.round(
           successfulData.reduce((sum, d) => sum + d.dataQuality.score, 0) / successfulData.length
-        )
+        ),
+        fallback_mode: aiResponse.fallback_mode || false,
+        ai_service_status: aiResponse.fallback_mode ? 'unavailable' : 'active'
       },
       status: 'completed'
     });
@@ -378,6 +510,108 @@ const getAnalysisResults = asyncHandler(async (req, res) => {
     success: true,
     data: analysis
   });
+});
+
+/**
+ * Test AI Services connection
+ */
+const testAIServices = asyncHandler(async (req, res) => {
+  const userId = req.userId;
+
+  try {
+    logger.info('Testing AI Services connection', { userId });
+
+    // Test basic health check
+    const healthResponse = await aiClient.healthCheck();
+    
+    // Test competitor analysis endpoint with minimal data
+    const testPayload = {
+      user_id: userId,
+      analysis_type: 'test',
+      competitors_data: [{
+        platform: 'instagram',
+        username: 'test_user',
+        profile_url: 'https://instagram.com/test_user',
+        verified: false,
+        profile_metrics: {
+          followers: 1000,
+          following: 500,
+          posts_count: 50,
+          engagement_rate: 5.0,
+          verified: false
+        },
+        content_analysis: {
+          total_posts: 50,
+          average_posts_per_week: 3,
+          content_types: { image: 40, video: 10 },
+          top_hashtags: ['test', 'example'],
+          posting_schedule: {}
+        },
+        engagement_metrics: {
+          average_likes: 50,
+          average_comments: 5,
+          average_shares: 2,
+          total_engagement: 57,
+          engagement_trend: 'stable'
+        },
+        recent_posts: [],
+        data_quality: { level: 'high', score: 90 }
+      }],
+      analysis_options: {
+        include_content_analysis: true,
+        include_engagement_analysis: true,
+        include_audience_analysis: false,
+        include_competitive_insights: false,
+        include_recommendations: false,
+        include_realtime_data: false,
+        max_posts: 5,
+        time_period_days: 7,
+        platform_specific: true
+      },
+      metadata: {
+        total_competitors: 1,
+        platforms_analyzed: ['instagram'],
+        data_collection_timestamp: new Date().toISOString(),
+        analysis_request_id: `test_${Date.now()}_${userId}`
+      },
+      collected_at: new Date().toISOString()
+    };
+
+    const testResponse = await aiClient.competitorAnalysis(testPayload);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: 'AI Services connection successful',
+      data: {
+        health_check: healthResponse,
+        test_analysis: {
+          status: 'success',
+          processing_time: testResponse.processing_time_ms,
+          confidence_score: testResponse.confidence_score,
+          model_version: testResponse.model_version
+        },
+        ai_service_url: process.env.AI_SERVICE_URL || 'https://api-ai-services.bloocube.com',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('AI Services test failed', {
+      userId,
+      error: error.message,
+      status: error.response?.status
+    });
+
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      message: 'AI Services connection failed',
+      error: error.message,
+      details: {
+        ai_service_url: process.env.AI_SERVICE_URL || 'https://api-ai-services.bloocube.com',
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
 });
 
 /**
@@ -614,5 +848,6 @@ module.exports = {
   getAnalysisResults,
   getAnalysisHistory,
   deleteAnalysis,
-  fetchCompetitorData
+  fetchCompetitorData,
+  testAIServices
 };
