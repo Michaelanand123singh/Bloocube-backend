@@ -18,6 +18,14 @@ const createCampaign = asyncHandler(async (req, res) => {
   const campaign = new Campaign(campaignData);
   await campaign.save();
 
+  // Create notification for admin users
+  try {
+    const NotificationService = require('../services/notificationService');
+    await NotificationService.notifyCampaignCreated(campaign);
+  } catch (e) {
+    logger.error('Failed to create campaign notification', e);
+  }
+
   logger.info('Campaign created', { campaignId: campaign._id, brandId: req.userId });
 
   res.status(HTTP_STATUS.CREATED).json({
