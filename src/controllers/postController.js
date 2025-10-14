@@ -707,6 +707,50 @@ async postToTwitter(post, user) {
     }
   }
 
+  // Get scheduled posts
+  async getScheduled(req, res) {
+    try {
+      const { page = 1, limit = 10 } = req.query;
+
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const skip = (pageNum - 1) * limitNum;
+
+      const [scheduled, total] = await Promise.all([
+        Post.find({
+          author: req.user._id,
+          status: 'scheduled'
+        })
+          .sort({ 'scheduling.scheduled_at': 1, createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .populate('author', 'username email'),
+        Post.countDocuments({
+          author: req.user._id,
+          status: 'scheduled'
+        })
+      ]);
+
+      res.json({
+        success: true,
+        scheduled,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching scheduled posts:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch scheduled posts'
+      });
+    }
+  }
+
   // Publish a post immediately
   async publishPost(req, res) {
     try {
@@ -860,6 +904,7 @@ async postToTwitter(post, user) {
         platform,
         post_type,
         scheduledAt,
+        scheduled_for,
         platformContent,
         tags,
         categories
@@ -896,6 +941,16 @@ async postToTwitter(post, user) {
 
       // ❌ REMOVED: const mediaFiles = this.processUploadedMedia(req); // No longer needed
 
+      // Normalize scheduled date from any accepted key
+      const incomingScheduled = scheduledAt || req.body?.scheduling?.scheduled_at || scheduled_for;
+      const scheduledDate = new Date(incomingScheduled);
+      if (!incomingScheduled || isNaN(scheduledDate.valueOf())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid scheduledAt is required (ISO 8601)'
+        });
+      }
+
       // Create post with scheduled status
       const post = new Post({
         title,
@@ -906,13 +961,13 @@ async postToTwitter(post, user) {
         status: 'scheduled',
         // The `scheduledAt` field is deprecated in favor of `scheduling.scheduled_at`
         // but keeping it for now if other parts of the app rely on it.
-        scheduledAt: new Date(scheduledAt),
+        scheduledAt: scheduledDate,
         platformContent: parsedPlatformContent,
         tags: parsedTags,
         categories: parsedCategories,
         media: req.files || [], // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
         scheduling: {
-          scheduled_at: new Date(scheduledAt), // Corrected to match schema
+          scheduled_at: scheduledDate, // Corrected to match schema
           timezone: req.body.timezone || 'UTC'
         }
       });
@@ -921,7 +976,7 @@ async postToTwitter(post, user) {
       await post.populate('author', 'username email');
 
       // TODO: Add job scheduling logic here (e.g., using node-cron or Bull queue)
-      console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledAt);
+      console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledDate.toISOString());
 
       res.status(201).json({
         success: true,
@@ -1029,10 +1084,30 @@ async postToTwitter(post, user) {
   async schedulePostById(req, res) {
     try {
       const { id } = req.params;
-      const { scheduledAt, timezone } = req.body;
+      const { scheduledAt, scheduled_for, timezone } = req.body;
       const userId = req.user._id;
 
-      console.log('⏰ Scheduling existing post:', { postId: id, userId, scheduledAt });
+      // Validate request
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: errors.array()
+        });
+      }
+
+      // Accept either scheduledAt or scheduling.scheduled_at
+      const incomingScheduled = scheduledAt || req.body?.scheduling?.scheduled_at || scheduled_for;
+      const scheduledDate = new Date(incomingScheduled);
+      if (!incomingScheduled || isNaN(scheduledDate.valueOf())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid scheduledAt is required (ISO 8601)'
+        });
+      }
+
+      console.log('⏰ Scheduling existing post:', { postId: id, userId, scheduledAt: incomingScheduled });
 
       // Find the post and verify ownership
       const post = await Post.findOne({ _id: id, author: userId });
@@ -1067,16 +1142,16 @@ async postToTwitter(post, user) {
       // Update post status to scheduled
       post.status = 'scheduled';
       // The `scheduledAt` field is deprecated in favor of `scheduling.scheduled_at`
-      post.scheduledAt = new Date(scheduledAt);
+      post.scheduledAt = scheduledDate;
       post.scheduling = {
-        scheduled_at: new Date(scheduledAt), // Corrected to match schema
+        scheduled_at: scheduledDate, // Corrected to match schema
         timezone: timezone || 'UTC'
       };
 
       await post.save();
       await post.populate('author', 'username email');
 
-      console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledAt);
+      console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledDate.toISOString());
 
       res.json({
         success: true,

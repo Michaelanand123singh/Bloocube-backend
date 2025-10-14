@@ -73,6 +73,13 @@ router.get('/drafts',
   postController.getDrafts
 );
 
+// Get user's scheduled posts
+router.get('/scheduled',
+  authenticate,
+  paginationValidation,
+  postController.getScheduled
+);
+
 // Validate post content
 router.post('/validate',
   authenticate,
@@ -120,23 +127,32 @@ router.post('/publish',
   postController.publishPost
 );
 
+// Helper validator for scheduled date from either scheduledAt or scheduling.scheduled_at
+const scheduledDateValidator = body().custom((_, { req }) => {
+  const fromRoot = req.body?.scheduledAt;
+  const fromNested = req.body?.scheduling?.scheduled_at;
+  const fromAlt = req.body?.scheduled_for;
+  const incoming = fromRoot || fromNested || fromAlt;
+  if (!incoming) {
+    throw new Error('Valid scheduled date required');
+  }
+  const scheduledDate = new Date(incoming);
+  if (isNaN(scheduledDate.valueOf())) {
+    throw new Error('Valid scheduled date required');
+  }
+  if (scheduledDate <= new Date()) {
+    throw new Error('Scheduled date must be in the future');
+  }
+  return true;
+});
+
 // Schedule a post for later
 router.post('/schedule',
   authenticate,
   uploadMiddleware,
   [
     ...postValidation,
-    body('scheduledAt')
-      .isISO8601()
-      .withMessage('Valid scheduled date required')
-      .custom((value) => {
-        const scheduledDate = new Date(value);
-        const now = new Date();
-        if (scheduledDate <= now) {
-          throw new Error('Scheduled date must be in the future');
-        }
-        return true;
-      })
+    scheduledDateValidator
   ],
   postController.schedulePost
 );
@@ -153,17 +169,7 @@ router.put('/:id/schedule',
   authenticate,
   idValidation,
   [
-    body('scheduledAt')
-      .isISO8601()
-      .withMessage('Valid scheduled date required')
-      .custom((value) => {
-        const scheduledDate = new Date(value);
-        const now = new Date();
-        if (scheduledDate <= now) {
-          throw new Error('Scheduled date must be in the future');
-        }
-        return true;
-      })
+    scheduledDateValidator
   ],
   postController.schedulePostById
 );

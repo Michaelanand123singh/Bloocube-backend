@@ -306,7 +306,9 @@ const CRON_SCHEDULES = {
   ANALYTICS_SYNC: '0 */6 * * *', // Every 6 hours
   CLEANUP_EXPIRED_TOKENS: '0 0 * * *', // Daily at midnight
   SEND_NOTIFICATIONS: '0 9 * * *', // Daily at 9 AM
-  BACKUP_DATABASE: '0 2 * * 0' // Weekly on Sunday at 2 AM
+  BACKUP_DATABASE: '0 2 * * 0', // Weekly on Sunday at 2 AM
+  // Process scheduled posts every minute
+  SCHEDULED_POSTS_PROCESSOR: '* * * * *'
 };
 
 module.exports = {

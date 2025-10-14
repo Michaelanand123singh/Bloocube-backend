@@ -4,6 +4,7 @@ const connectDB = require("./config/db");
 const config = require("./config/env");
 const logger = require("./utils/logger");
 const redis = require("./config/redis");
+const { scheduleJobs } = require('./services/scheduler/jobScheduler');
 
 const PORT = config.PORT || 5000;
 
@@ -53,6 +54,12 @@ const findAvailablePort = async (startPort) => {
       console.log(`Server is running on port ${availablePort}`);
       if (availablePort !== PORT) {
         console.log(`Note: Port ${PORT} was in use, using port ${availablePort} instead`);
+      }
+      try {
+        scheduleJobs();
+        console.log('Cron jobs scheduled');
+      } catch (e) {
+        console.error('Failed to schedule cron jobs:', e);
       }
     });
 
