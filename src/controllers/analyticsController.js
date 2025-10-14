@@ -2,6 +2,15 @@
 const Analytics = require('../models/Analytics');
 const { HTTP_STATUS } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const Post = require('../models/Post');
+const User = require('../models/User');
+
+// Social services (used if available)
+let TwitterService, LinkedInService, YouTubeService, FacebookService;
+try { TwitterService = require('../services/social/twitter'); } catch {}
+try { LinkedInService = require('../services/social/linkedin'); } catch {}
+try { YouTubeService = require('../services/social/youtube'); } catch {}
+try { FacebookService = require('../services/social/facebook'); } catch {}
 
 // Create analytics record (admin/system)
 const createAnalytics = asyncHandler(async (req, res) => {
@@ -15,7 +24,197 @@ const getUserAnalytics = asyncHandler(async (req, res) => {
   const { userId } = req.params;
   const { platform } = req.query;
   const records = await Analytics.findByUser(userId, platform);
-  res.json({ success: true, data: { analytics: records } });
+
+  if (records && records.length > 0) {
+    return res.json({ success: true, data: { analytics: records } });
+  }
+
+  // Fallback: synthesize analytics from user's published posts
+  const postQuery = { author: userId, status: 'published' };
+  if (platform) {
+    postQuery.platform = platform;
+  }
+
+  const posts = await Post.find(postQuery).sort({ 'publishing.published_at': -1 }).limit(200);
+
+  const synthesized = posts.map((p) => ({
+    user_id: p.author,
+    platform: p.platform,
+    post_id: p.publishing?.platform_post_id || p._id?.toString(),
+    post_type: p.post_type,
+    content: {
+      caption: typeof p.content === 'object' ? (p.content.caption || p.title || '') : (p.title || ''),
+      media_type: Array.isArray(p.media) && p.media.length > 0 ? p.media[0].type : undefined,
+      media_count: Array.isArray(p.media) ? p.media.length : undefined
+    },
+    metrics: {
+      views: p.analytics?.views || 0,
+      likes: p.analytics?.likes || 0,
+      comments: p.analytics?.comments || 0,
+      shares: p.analytics?.shares || 0,
+      clicks: p.analytics?.clicks || 0,
+    },
+    timing: {
+      posted_at: p.publishing?.published_at || p.createdAt
+    }
+  }));
+
+  return res.json({ success: true, data: { analytics: synthesized } });
+});
+
+// Sync analytics from linked social accounts into Analytics collection
+const syncUserAnalytics = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { days = 30, limit = 50 } = req.query;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, message: 'User not found' });
+  }
+
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - Math.max(1, parseInt(days)));
+
+  const upserts = [];
+
+  // Helper to upsert analytics
+  const upsertAnalytics = async (doc) => {
+    try {
+      // Compute engagement rate if possible
+      const likes = doc.metrics?.likes || 0;
+      const comments = doc.metrics?.comments || 0;
+      const shares = doc.metrics?.shares || 0;
+      const totalEngagement = likes + comments + shares;
+      const denominator = Math.max(doc.metrics?.views || doc.metrics?.reach || doc.metrics?.impressions || doc.metrics?.followers || 1, 1);
+      const engagementRate = parseFloat(((totalEngagement / denominator) * 100).toFixed(2));
+
+      // Prefer schema auto-calc when followers present; otherwise set explicit rate
+      doc.metrics = {
+        followers: doc.metrics?.followers || 0,
+        views: doc.metrics?.views || 0,
+        likes,
+        comments,
+        shares,
+        saves: doc.metrics?.saves || 0,
+        reach: doc.metrics?.reach || 0,
+        impressions: doc.metrics?.impressions || 0,
+        clicks: doc.metrics?.clicks || 0,
+        engagement_rate: engagementRate
+      };
+
+      await Analytics.updateOne(
+        { user_id: doc.user_id, platform: doc.platform, post_id: doc.post_id },
+        { $set: doc },
+        { upsert: true }
+      );
+    } catch (e) {
+      // Swallow per-item errors to continue sync
+    }
+  };
+
+  // Twitter
+  if (user.socialAccounts?.twitter?.username && TwitterService?.getUserTweets) {
+    try {
+      const tweets = await TwitterService.getUserTweets(user.socialAccounts.twitter.username, { max_results: Math.min(100, parseInt(limit) || 50) });
+      for (const t of tweets || []) {
+        const createdAt = new Date(t.created_at || t.createdAt || Date.now());
+        if (createdAt < sinceDate) continue;
+        await upsertAnalytics({
+          user_id: user._id,
+          platform: 'twitter',
+          post_id: t.id?.toString(),
+          post_type: t.referenced_tweets?.[0]?.type === 'replied_to' ? 'thread' : 'tweet',
+          content: { caption: t.text || '', media_type: Array.isArray(t.attachments?.media_keys) ? 'image' : 'text' },
+          metrics: {
+            likes: t.public_metrics?.like_count || 0,
+            comments: t.public_metrics?.reply_count || 0,
+            shares: t.public_metrics?.retweet_count || 0,
+            impressions: t.public_metrics?.impression_count || 0
+          },
+          timing: { posted_at: createdAt }
+        });
+      }
+    } catch {}
+  }
+
+  // LinkedIn
+  if (user.socialAccounts?.linkedin?.username && LinkedInService?.getUserPosts) {
+    try {
+      const posts = await LinkedInService.getUserPosts(user.socialAccounts.linkedin.username, { limit: Math.min(100, parseInt(limit) || 50) });
+      for (const p of posts || []) {
+        const createdAt = new Date(p.created_at || p.createdAt || Date.now());
+        if (createdAt < sinceDate) continue;
+        await upsertAnalytics({
+          user_id: user._id,
+          platform: 'linkedin',
+          post_id: (p.id || p.urn || '').toString(),
+          post_type: p.video ? 'video' : 'post',
+          content: { caption: p.text || p.caption || '', media_type: p.video ? 'video' : 'text' },
+          metrics: {
+            likes: p.like_count || p.likes || 0,
+            comments: p.comment_count || p.comments || 0,
+            shares: p.share_count || p.shares || 0,
+            impressions: p.impressions || 0
+          },
+          timing: { posted_at: createdAt }
+        });
+      }
+    } catch {}
+  }
+
+  // YouTube
+  if (user.socialAccounts?.youtube?.id && YouTubeService?.getChannelVideos) {
+    try {
+      const videos = await YouTubeService.getChannelVideos(user.socialAccounts.youtube.id, { maxResults: Math.min(50, parseInt(limit) || 25) });
+      for (const v of videos || []) {
+        const published = new Date(v.snippet?.publishedAt || Date.now());
+        if (published < sinceDate) continue;
+        await upsertAnalytics({
+          user_id: user._id,
+          platform: 'youtube',
+          post_id: v.id?.videoId || v.id || '',
+          post_type: 'video',
+          content: { title: v.snippet?.title || '', caption: v.snippet?.description || '', media_type: 'video' },
+          metrics: {
+            views: Number(v.statistics?.viewCount || 0),
+            likes: Number(v.statistics?.likeCount || 0),
+            comments: Number(v.statistics?.commentCount || 0),
+            shares: 0
+          },
+          timing: { posted_at: published }
+        });
+      }
+    } catch {}
+  }
+
+  // Facebook (page-level)
+  if (user.socialAccounts?.facebook?.username && FacebookService?.getPagePosts) {
+    try {
+      const posts = await FacebookService.getPagePosts(user.socialAccounts.facebook.username, { limit: Math.min(50, parseInt(limit) || 25) });
+      const postsArray = Array.isArray(posts) ? posts : posts?.posts || [];
+      for (const p of postsArray) {
+        const created = new Date(p.created_time || p.created_at || Date.now());
+        if (created < sinceDate) continue;
+        await upsertAnalytics({
+          user_id: user._id,
+          platform: 'facebook',
+          post_id: p.id?.toString(),
+          post_type: p.type || 'post',
+          content: { caption: p.message || p.text || '', media_type: (p.type === 'photo' ? 'image' : 'text') },
+          metrics: {
+            likes: p.like_count || p.reactions?.summary?.total_count || 0,
+            comments: p.comment_count || p.comments?.summary?.total_count || 0,
+            shares: p.share_count || p.shares?.count || 0
+          },
+          timing: { posted_at: created }
+        });
+      }
+    } catch {}
+  }
+
+  // Instagram: not implemented service here; skipping for now
+
+  return res.json({ success: true, data: { synced: true } });
 });
 
 // Get top performing posts
@@ -36,7 +235,8 @@ module.exports = {
   createAnalytics,
   getUserAnalytics,
   getTopPerforming,
-  getPlatformStats
+  getPlatformStats,
+  syncUserAnalytics
 };
 
 

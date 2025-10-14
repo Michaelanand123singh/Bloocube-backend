@@ -10,6 +10,9 @@ router.post('/', authenticate, authorize('admin'), validateWithJoi(analyticsVali
 // Get analytics by user
 router.get('/user/:userId', authenticate, ctrl.getUserAnalytics);
 
+// Sync analytics from linked accounts
+router.post('/user/:userId/sync', authenticate, ctrl.syncUserAnalytics);
+
 // Get top performing posts
 router.get('/top', authenticate, ctrl.getTopPerforming);
 
