@@ -19,6 +19,10 @@ router.get('/top', authenticate, ctrl.getTopPerforming);
 // Platform stats
 router.get('/platform/:platform', authenticate, ctrl.getPlatformStats);
 
+// Time series and success/failure for admin dashboard
+router.get('/timeseries/posts', authenticate, authorize('admin'), ctrl.getPostsTimeSeries);
+router.get('/success-failure', authenticate, authorize('admin'), ctrl.getSuccessFailure);
+
 module.exports = router;
 
 
