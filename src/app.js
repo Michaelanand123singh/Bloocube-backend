@@ -8,7 +8,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const hpp = require("hpp");
 const config = require("./config/env");
 const { errorHandler, notFound } = require("./middlewares/errorHandler");
-const { generalLimiter } = require("./middlewares/rateLimiter");
+const { dynamicLimiter } = require("./middlewares/rateLimiter");
 const logger = require("./utils/logger");
 
 // Routes
@@ -30,6 +30,9 @@ const competitorRoutes = require("./routes/competitor.routes");
 const notificationRoutes = require("./routes/notification.routes");
 
 const app = express();
+
+// If behind a proxy/load balancer (e.g., Cloud Run, Nginx), trust proxy to get correct client IP
+app.set('trust proxy', true);
 
 // Middlewares
 app.use(helmet());
@@ -85,7 +88,8 @@ app.use(mongoSanitize());
 app.use(hpp());
 app.use(compression());
 app.use(morgan("dev"));
-app.use(generalLimiter);
+// Use dynamic rate limiting by role (admin/brand/creator) instead of a flat global limit
+app.use(dynamicLimiter);
 
 // Healthcheck
 app.get("/health", (req, res) => {
