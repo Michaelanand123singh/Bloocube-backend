@@ -68,6 +68,9 @@ const config = {
   GCS_PROJECT_ID: process.env.GCS_PROJECT_ID,
   GCS_KEYFILE: process.env.GCS_KEYFILE, // optional: path to service account json
   GCS_BASE_URL: process.env.GCS_BASE_URL || 'https://storage.googleapis.com',
+
+  // Public Base URL for building absolute links (required for IG photo posting when using local storage)
+  BASE_URL: process.env.BASE_URL,
   
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS || 900000, // 15 minutes

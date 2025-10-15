@@ -280,5 +280,62 @@ module.exports = {
   handleCallback,
   getProfile,
   disconnect,
-  validateConnection
+  validateConnection,
+  // New export: postContent to publish to a connected Facebook Page
+  postContent: asyncHandler(async (req, res) => {
+    const userId = req.userId;
+    const { message, imageUrl, pageId } = req.body;
+
+    try {
+      const user = await User.findById(userId).select('socialAccounts.facebook');
+      if (!user || !user.socialAccounts?.facebook?.accessToken) {
+        return res.status(400).json({ success: false, error: 'Facebook account not connected' });
+      }
+
+      const userAccessToken = user.socialAccounts.facebook.accessToken;
+
+      // Fetch user pages to obtain a Page Access Token
+      const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
+        params: { access_token: userAccessToken, fields: 'id,name,access_token' }
+      });
+
+      const pages = pagesResp.data?.data || [];
+      if (pages.length === 0) {
+        return res.status(400).json({ success: false, error: 'No Facebook Pages found for this user' });
+      }
+
+      const selectedPage = pageId ? pages.find(p => p.id === pageId) : pages[0];
+      if (!selectedPage) {
+        return res.status(400).json({ success: false, error: 'Specified Page not found for this user' });
+      }
+
+      const pageAccessToken = selectedPage.access_token;
+      const targetPageId = selectedPage.id;
+
+      // If imageUrl is provided, create a photo post; otherwise create a feed post (text/link)
+      if (imageUrl) {
+        const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, null, {
+          params: {
+            url: imageUrl,
+            caption: message || '',
+            access_token: pageAccessToken
+          }
+        });
+
+        return res.json({ success: true, type: 'photo', id: photoResp.data?.post_id || photoResp.data?.id, pageId: targetPageId });
+      }
+
+      const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/feed`, null, {
+        params: {
+          message: message || '',
+          access_token: pageAccessToken
+        }
+      });
+
+      return res.json({ success: true, type: 'feed', id: feedResp.data?.id, pageId: targetPageId });
+    } catch (error) {
+      const apiError = error.response?.data || { message: error.message };
+      return res.status(400).json({ success: false, error: apiError?.error?.message || apiError.message || 'Failed to post content', details: apiError });
+    }
+  })
 };

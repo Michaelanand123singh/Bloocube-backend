@@ -167,6 +167,7 @@ const userSchema = new mongoose.Schema({
 
     instagram: {
       id: String,
+      igAccountId: String,
       username: String,
       name: String,
       accessToken: String,

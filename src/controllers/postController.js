@@ -6,11 +6,13 @@ const fs = require('fs'); // Must be imported for the local storage fallback
 const { TwitterApi } = require('twitter-api-v2'); 
 const { downloadToBufferFromGcs } = require('../utils/storage'); // <--- CRITICAL IMPORT
 const config = require('../config/env');
+const axios = require('axios');
 
 // Import platform services
 const twitterService = require('../services/social/twitter');
 const youtubeService = require('../services/social/youtube');
 const linkedinService = require('../services/social/linkedin');
+const instagramService = require('../services/social/instagram');
 
 class PostController {
 
@@ -51,16 +53,16 @@ class PostController {
           platformResult = await this.postToYouTube(post, user);
           break;
         case 'instagram':
-          console.log('📸 Instagram posting not implemented yet');
-          platformResult = { success: false, error: 'Instagram posting not implemented yet' };
+          console.log('📸 Calling Instagram posting...');
+          platformResult = await this.postToInstagram(post, user);
           break;
         case 'linkedin':
           console.log('💼 Calling LinkedIn posting...');
           platformResult = await this.postToLinkedIn(post, user);
           break;
         case 'facebook':
-          console.log('👥 Facebook posting not implemented yet');
-          platformResult = { success: false, error: 'Facebook posting not implemented yet' };
+          console.log('👥 Calling Facebook posting...');
+          platformResult = await this.postToFacebook(post, user);
           break;
         default:
           console.log('❓ Unsupported platform:', post.platform);
@@ -248,6 +250,131 @@ async postToTwitter(post, user) {
         success: false,
         error: error.message || 'Failed to post to YouTube'
       };
+    }
+  }
+
+  // Helper: get absolute URL for stored media
+  getAbsoluteMediaUrl(relativeOrAbsoluteUrl) {
+    if (!relativeOrAbsoluteUrl) return null;
+    if (/^https?:\/\//i.test(relativeOrAbsoluteUrl)) return relativeOrAbsoluteUrl;
+    const base = config.BASE_URL || `http://localhost:${config.PORT || 5000}`;
+    return `${base}${relativeOrAbsoluteUrl.startsWith('/') ? '' : '/'}${relativeOrAbsoluteUrl}`;
+  }
+
+  // Post to Instagram via IG Graph API using stored page token and igAccountId
+  async postToInstagram(post, user) {
+    try {
+      const ig = user.socialAccounts?.instagram || {};
+      let accessToken = ig.accessToken;
+
+      // If IG token missing, try to derive from connected Facebook user access token
+      let igAccountId = ig.igAccountId;
+      if (!accessToken || !igAccountId) {
+        const fb = user.socialAccounts?.facebook;
+        if (fb?.accessToken) {
+          try {
+            const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
+              params: { access_token: fb.accessToken, fields: 'id,name,access_token,instagram_business_account{id,username,profile_picture_url}' }
+            });
+            const pages = pagesResp.data?.data || [];
+            const withIg = pages.find(p => p.instagram_business_account?.id && p.access_token);
+            if (withIg) {
+              accessToken = withIg.access_token; // Page token is required for IG Graph posting
+              igAccountId = withIg.instagram_business_account.id;
+              // Persist for future posts
+              try {
+                await User.findByIdAndUpdate(user._id, {
+                  $set: {
+                    'socialAccounts.instagram.accessToken': accessToken,
+                    'socialAccounts.instagram.igAccountId': igAccountId,
+                    'socialAccounts.instagram.username': withIg.instagram_business_account.username,
+                    'socialAccounts.instagram.connectedAt': new Date(),
+                    'socialAccounts.instagram.isBasicDisplay': false
+                  }
+                });
+              } catch {}
+            }
+          } catch (e) {
+            // fall through to error below
+          }
+        }
+      }
+      if (!accessToken || !igAccountId) {
+        return { success: false, error: 'Instagram account not connected. Please connect an Instagram Business account linked to a Facebook Page.' };
+      }
+
+      const caption = post.content?.caption || post.title || '';
+      // Prefer explicitly provided platformContent, fallback to first image media
+      let mediaUrl = post.platformContent?.instagram?.mediaUrl;
+      if (!mediaUrl && Array.isArray(post.media) && post.media.length > 0) {
+        const firstImage = post.media.find(m => m.type === 'image');
+        if (firstImage?.url) mediaUrl = this.getAbsoluteMediaUrl(firstImage.url);
+      }
+
+      if (!mediaUrl) {
+        return { success: false, error: 'No image URL found for Instagram post' };
+      }
+
+      const result = await instagramService.postContent(accessToken, igAccountId, { mediaUrl, caption });
+      if (!result.success) {
+        return { success: false, error: result.error || 'Failed to post to Instagram', raw: result.raw };
+      }
+
+      return { success: true, ig_media_id: result.id, type: 'image' };
+    } catch (error) {
+      return { success: false, error: error.message || 'Instagram posting failed' };
+    }
+  }
+
+  // Post to Facebook Page feed/photos using page access token
+  async postToFacebook(post, user) {
+    try {
+      const fb = user.socialAccounts?.facebook;
+      if (!fb?.accessToken) {
+        return { success: false, error: 'Facebook account not connected' };
+      }
+
+      // 1) Get user pages and select a page
+      const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
+        params: { access_token: fb.accessToken, fields: 'id,name,access_token' }
+      });
+      const pages = pagesResp.data?.data || [];
+      if (pages.length === 0) {
+        return { success: false, error: 'No Facebook Pages found for this user' };
+      }
+
+      // Allow explicit pageId via platformContent override
+      const preferredPageId = post.platformContent?.facebook?.pageId;
+      const page = preferredPageId ? pages.find(p => p.id === preferredPageId) : pages[0];
+      if (!page) {
+        return { success: false, error: 'Specified Facebook Page not found for this user' };
+      }
+
+      const pageAccessToken = page.access_token;
+      const pageId = page.id;
+
+      const message = post.content?.caption || post.title || '';
+      // Select media if available
+      let imageUrl = post.platformContent?.facebook?.imageUrl;
+      if (!imageUrl && Array.isArray(post.media) && post.media.length > 0) {
+        const firstImage = post.media.find(m => m.type === 'image');
+        if (firstImage?.url) imageUrl = this.getAbsoluteMediaUrl(firstImage.url);
+      }
+
+      if (imageUrl) {
+        const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/photos`, null, {
+          params: { url: imageUrl, caption: message, access_token: pageAccessToken }
+        });
+        return { success: true, type: 'photo', post_id: photoResp.data?.post_id || photoResp.data?.id, pageId };
+      }
+
+      const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
+        params: { message, access_token: pageAccessToken }
+      });
+      return { success: true, type: 'feed', post_id: feedResp.data?.id, pageId };
+    } catch (error) {
+      const api = error.response?.data;
+      return { success: false, error: api?.error?.message || error.message || 'Facebook posting failed', raw: api };
     }
   }
 
