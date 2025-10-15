@@ -7,7 +7,6 @@ const { upload, persistUploads } = require('../middlewares/upload');
 
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
-router.get('/auth-url', authenticate, instagramController.generateAuthURL);
 router.post('/auth-url', authenticate, instagramController.generateAuthURL);
 router.get('/callback', instagramController.handleCallback);
 

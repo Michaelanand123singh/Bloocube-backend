@@ -5,7 +5,7 @@ const { authenticate } = require('../middlewares/auth');
 
 // Facebook OAuth routes
 router.post('/auth-url', authenticate, facebookController.generateAuthURL);
-router.post('/callback', authenticate, facebookController.handleCallback);
+router.get('/callback', facebookController.handleCallback);
 
 // Facebook profile and connection management
 router.get('/profile', authenticate, facebookController.getProfile);

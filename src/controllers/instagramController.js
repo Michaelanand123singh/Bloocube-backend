@@ -15,82 +15,164 @@ const serializeErrorToUrl = (err) => {
 };
 
 class InstagramController {
-  // Generate Instagram OAuth URL
-  async generateAuthURL(req, res) {
-    try {
-      console.log('🔑 Instagram generateAuthURL called:', {
-        hasUser: !!req.user,
-        userId: req.userId || req.user?._id,
-        redirectUri: req.body?.redirectUri || req.query?.redirectUri,
-        method: req.method
-      });
+  // Generate Instagram OAuth URL
+  async generateAuthURL(req, res) {
+    try {
+      console.log('🔑 Instagram generateAuthURL called:', {
+        hasUser: !!req.user,
+        userId: req.userId || req.user?._id,
+        redirectUri: req.body?.redirectUri,
+        method: req.method
+      });
 
-      const redirectUri = req.body?.redirectUri || req.query?.redirectUri;
-      const state = jwt.sign(
-        { userId: req.userId || req.user._id },
-        config.JWT_SECRET,
-        { expiresIn: '30m' }
-      );
+      const { redirectUri } = req.body;
+      
+      // Use backend callback URL so Instagram redirects back to API
+      const backendCallback = `${config.BASE_URL}/api/instagram/callback`;
+      const finalRedirectUri = redirectUri || backendCallback;
+      
+      const state = jwt.sign(
+        { 
+          userId: req.userId || req.user._id,
+          redirectUri: finalRedirectUri,
+          timestamp: Date.now()
+        },
+        config.JWT_SECRET,
+        { expiresIn: '10m' }
+      );
 
-      const authURL = instagramService.generateAuthURL(redirectUri, state);
+      const authURL = instagramService.generateAuthURL(finalRedirectUri, state);
 
-      console.log('✅ Instagram auth URL generated:', { hasAuthURL: !!authURL, state: state.substring(0, 20) + '...' });
-      return res.json({ success: true, authURL, state, redirectUri });
-    } catch (error) {
-      console.error('❌ Instagram generateAuthURL error:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  }
+      console.log('✅ Instagram auth URL generated:', { hasAuthURL: !!authURL, state: state.substring(0, 20) + '...' });
+      return res.json({ success: true, authURL, state, redirectUri: finalRedirectUri });
+    } catch (error) {
+      console.error('❌ Instagram generateAuthURL error:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 
-  // Handle Instagram OAuth callback
-  async handleCallback(req, res) {
-  try {
-      const { code, state } = req.query;
-      const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+  // Handle Instagram OAuth callback
+  async handleCallback(req, res) {
+    // Frontend URL for redirection - ensure it points to creator settings
+    const baseFrontendUrl = config.FRONTEND_URL || 'http://localhost:3000';
+    const redirectToFrontend = `${baseFrontendUrl}/creator/settings`;
+    
+    try {
+      const { code, state, error, error_description } = req.query;
 
-      if (!code || !state) {
-          return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=Missing+code+or+state`);
+      // Handle user denial or Instagram errors
+      if (error) {
+        console.log('Instagram OAuth error:', error, error_description);
+        return res.redirect(
+          `${redirectToFrontend}?instagram=error&message=${encodeURIComponent(error_description || error)}`
+        );
       }
 
-      const decodedState = jwt.verify(state, config.JWT_SECRET);
-      const serverCallback = `${req.protocol}://${req.get('host')}/api/instagram/callback`;
+      // Validate required parameters
+      if (!code || !state) {
+        return res.redirect(
+          `${redirectToFrontend}?instagram=error&message=Missing+code+or+state`
+        );
+      }
+
+      // Verify and decode state
+      let decoded;
+      try {
+        decoded = jwt.verify(state, config.JWT_SECRET);
+      } catch (e) {
+        console.error('Invalid state token:', e.message);
+        return res.redirect(
+          `${redirectToFrontend}?instagram=error&message=Invalid+or+expired+state`
+        );
+      }
+
+      // Extract redirectUri from decoded state
+      const redirectUri = decoded.redirectUri || `${config.BASE_URL}/api/instagram/callback`;
       
-      // The new exchangeCodeForToken is simpler and more robust
-      const tokenResult = await instagramService.exchangeCodeForToken(code, serverCallback);
+      if (!redirectUri) {
+        return res.redirect(
+          `${redirectToFrontend}?instagram=error&message=Missing+redirect+URI`
+        );
+      }
+
+      console.log(`🔄 Processing Instagram callback for user: ${decoded.userId}`);
+
+      // Exchange code for access token
+      const tokenResult = await instagramService.exchangeCodeForToken(code, redirectUri);
 
       if (!tokenResult.success) {
-          const detail = serializeErrorToUrl(tokenResult.error);
-          return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(detail)}`);
+        const detail = serializeErrorToUrl(tokenResult.error);
+        return res.redirect(`${redirectToFrontend}?instagram=error&message=${encodeURIComponent(detail)}`);
       }
 
       // Update the user record in the database with all necessary info
       await User.findByIdAndUpdate(
-          decodedState.userId,
-          {
-              $set: {
-                  'socialAccounts.instagram.accessToken': tokenResult.accessToken,
-                  'socialAccounts.instagram.igAccountId': tokenResult.igAccountId, // IMPORTANT: Store the Business Account ID
-                  'socialAccounts.instagram.username': tokenResult.igUsername,
-                  'socialAccounts.instagram.name': tokenResult.igName,
-                  'socialAccounts.instagram.profileImageUrl': tokenResult.igProfileImageUrl,
-                  'socialAccounts.instagram.connectedAt': new Date(),
-                  // No need to store expiresAt if we're not auto-refreshing
-              }
-          },
-          { new: true, upsert: true }
+        decoded.userId,
+        {
+          $set: {
+            'socialAccounts.instagram.accessToken': tokenResult.accessToken,
+            'socialAccounts.instagram.igAccountId': tokenResult.igAccountId,
+            'socialAccounts.instagram.username': tokenResult.igUsername,
+            'socialAccounts.instagram.name': tokenResult.igName,
+            'socialAccounts.instagram.profileImageUrl': tokenResult.igProfileImageUrl,
+            'socialAccounts.instagram.connectedAt': new Date(),
+            'socialAccounts.instagram.isBasicDisplay': tokenResult.isBasicDisplay || false,
+            'socialAccounts.instagram.limitations': tokenResult.limitations || null,
+          }
+        },
+        { new: true, upsert: true }
       );
 
       console.log("✅ Instagram user updated in DB");
-      return res.redirect(`${redirectToFrontend}/creator/settings?instagram=success`);
-  } catch (error) {
+      return res.redirect(`${redirectToFrontend}?instagram=success&message=Instagram+account+connected+successfully`);
+    } catch (error) {
       console.error("🔥 Instagram callback error:", error);
       const msg = serializeErrorToUrl(error);
-      return res.redirect(`${config.FRONTEND_URL}/creator/settings?instagram=error&message=${encodeURIComponent(msg)}`);
+      return res.redirect(`${redirectToFrontend}?instagram=error&message=${encodeURIComponent(msg)}`);
+    }
+  }
+
+// Disconnect Instagram account
+async disconnect(req, res) {
+  try {
+    const userId = req.userId || req.user?.id;
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Clear Instagram account data
+    user.socialAccounts.instagram = {
+      accessToken: undefined,
+      igAccountId: undefined,
+      username: undefined,
+      name: undefined,
+      profileImageUrl: undefined,
+      connectedAt: undefined,
+      isBasicDisplay: undefined,
+      limitations: undefined
+    };
+
+    await user.save();
+
+    console.log('Instagram account disconnected for user:', userId);
+    
+    res.json({
+      success: true,
+      message: 'Instagram account disconnected successfully'
+    });
+  } catch (error) {
+    console.error('Instagram disconnect error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to disconnect Instagram account'
+    });
   }
 }
-
-// disconnect remains the same...
-async disconnect(req, res) { /* ... */ }
 
 // A helper function to manage API calls
 async _performApiAction(req, res, action) {
@@ -131,8 +213,41 @@ async postContent(req, res) {
   });
 }
 
-// getProfile remains the same...
-async getProfile(req, res) { /* ... */ }
+// Get Instagram profile
+async getProfile(req, res) {
+  try {
+    const userId = req.userId || req.user?.id;
+    const user = await User.findById(userId).select('socialAccounts.instagram');
+    
+    if (!user || !user.socialAccounts?.instagram || !user.socialAccounts.instagram.accessToken) {
+      return res.json({
+        success: false,
+        error: 'Instagram account not connected'
+      });
+    }
+
+    const instagramAccount = user.socialAccounts.instagram;
+    
+    res.json({
+      success: true,
+      profile: {
+        id: instagramAccount.igAccountId || instagramAccount.id,
+        username: instagramAccount.username,
+        name: instagramAccount.name,
+        profileImageUrl: instagramAccount.profileImageUrl,
+        connectedAt: instagramAccount.connectedAt,
+        isBasicDisplay: instagramAccount.isBasicDisplay || false,
+        limitations: instagramAccount.limitations || null
+      }
+    });
+  } catch (error) {
+    console.error('Instagram profile fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Instagram profile'
+    });
+  }
+}
 
 // UPDATED: getInsights
 async getInsights(req, res) {

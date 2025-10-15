@@ -16,10 +16,11 @@ class InstagramService {
   }
 
   generateAuthURL(redirectUri, state) {
+    // Use Facebook Login scopes for Instagram Business API
     const resolvedScopes = (config.INSTAGRAM_SCOPES || '').split(',')
       .map(s => s.trim())
       .filter(Boolean)
-      .join(',') || 'instagram_basic,pages_show_list,instagram_content_publish';
+      .join(',') || 'pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_insights,instagram_content_publish';
 
     const params = new URLSearchParams({
       client_id: this.clientId,
@@ -67,12 +68,38 @@ class InstagramService {
 
       const pages = accountsResponse.data.data;
       if (!pages || pages.length === 0) {
-        throw new Error('No Facebook Pages found for this user.');
+        throw new Error('No Facebook Pages found for this user. Please create a Facebook Page and connect it to your Instagram Business account to use Instagram integration.');
       }
 
       const connectedPage = pages.find(page => page.instagram_business_account);
       if (!connectedPage) {
-        throw new Error('No Instagram Business Account found linked to your Facebook Pages.');
+        // Fallback: Try to use Instagram Basic Display API for personal accounts
+        console.log('🔄 No Instagram Business account found, trying Instagram Basic Display API...');
+        
+        try {
+          // Get user's Instagram account info using Basic Display API
+          const basicDisplayResponse = await axios.get(`${this.baseURL}/me`, {
+            params: {
+              fields: 'id,name',
+              access_token: longLivedUserToken,
+            },
+          });
+
+          // For Basic Display API, we can only get basic info, not post content
+          return {
+            success: true,
+            accessToken: longLivedUserToken,
+            igAccountId: basicDisplayResponse.data.id,
+            igUsername: basicDisplayResponse.data.name,
+            igName: basicDisplayResponse.data.name,
+            igProfileImageUrl: null,
+            expiresIn: 60 * 24 * 60 * 60,
+            isBasicDisplay: true, // Flag to indicate this is Basic Display API
+            limitations: 'Basic Display API - Limited functionality, cannot post content'
+          };
+        } catch (basicDisplayError) {
+          throw new Error('No Instagram Business Account found linked to your Facebook Pages. Please convert your Instagram account to a Business account and connect it to a Facebook Page to use full Instagram integration features.');
+        }
       }
 
       console.log(`✅ Found connected page: ${connectedPage.name}`);
@@ -86,6 +113,7 @@ class InstagramService {
         igName: connectedPage.instagram_business_account.name,
         igProfileImageUrl: connectedPage.instagram_business_account.profile_picture_url,
         expiresIn: 60 * 24 * 60 * 60, // Page tokens are typically long-lived (60+ days)
+        isBasicDisplay: false
       };
 
     } catch (error) {

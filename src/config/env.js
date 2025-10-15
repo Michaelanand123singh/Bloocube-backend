@@ -31,7 +31,7 @@ const config = {
   INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET || '9342a533439a90031466591c8ee0e781',
   // Use Facebook Login scopes for Instagram Business (Graph API)
   // If you need messaging/content publish add: instagram_manage_messages, instagram_content_publish, pages_manage_metadata
-  INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'instagram_basic,instagram_manage_insights,instagram_manage_comments,pages_show_list,pages_read_engagement',
+  INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_insights,instagram_manage_comments,instagram_content_publish',
   FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID || '1267511308478797',
   FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET || '9342a533439a90031466591c8ee0e781',
   TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID,

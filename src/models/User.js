@@ -172,7 +172,9 @@ const userSchema = new mongoose.Schema({
       accessToken: String,
       refreshToken: String,
       expiresAt: Date,
-      connectedAt: Date
+      connectedAt: Date,
+      isBasicDisplay: Boolean,
+      limitations: String
     },
     facebook: {
       id: String,

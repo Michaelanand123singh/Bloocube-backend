@@ -1,6 +1,8 @@
 const asyncHandler = require('express-async-handler');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 const config = require('../config/env');
+const User = require('../models/User');
 
 // Facebook OAuth configuration
 const FACEBOOK_CLIENT_ID = config.FACEBOOK_APP_ID;
@@ -13,7 +15,14 @@ const generateAuthURL = asyncHandler(async (req, res) => {
   const { redirectUri } = req.body;
 
   try {
-    const state = `${userId}_${Date.now()}`;
+    // Create a JWT state token for security
+    const statePayload = {
+      userId,
+      redirectUri: redirectUri || FACEBOOK_REDIRECT_URI,
+      timestamp: Date.now()
+    };
+    const state = jwt.sign(statePayload, config.JWT_SECRET, { expiresIn: '10m' });
+    
     const scope = 'email,public_profile,pages_manage_posts,pages_read_engagement';
     
     const authURL = `https://www.facebook.com/v18.0/dialog/oauth?` +
@@ -39,21 +48,55 @@ const generateAuthURL = asyncHandler(async (req, res) => {
 
 // Handle Facebook OAuth callback
 const handleCallback = asyncHandler(async (req, res) => {
-  const { code, state, redirectUri } = req.body;
-
+  // Frontend URL for redirection - ensure it points to creator settings
+  const baseFrontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const redirectToFrontend = `${baseFrontendUrl}/creator/settings`;
+  
   try {
-    if (!code) {
-      return res.status(400).json({
-        success: false,
-        error: 'Authorization code not provided'
-      });
+    const { code, state, error, error_description } = req.query;
+
+    // Handle user denial or Facebook errors
+    if (error) {
+      console.log('Facebook OAuth error:', error, error_description);
+      return res.redirect(
+        `${redirectToFrontend}?facebook=error&message=${encodeURIComponent(error_description || error)}`
+      );
     }
+
+    // Validate required parameters
+    if (!code || !state) {
+      return res.redirect(
+        `${redirectToFrontend}?facebook=error&message=Missing+code+or+state`
+      );
+    }
+
+    // Verify and decode state
+    let decoded;
+    try {
+      decoded = jwt.verify(state, config.JWT_SECRET);
+    } catch (e) {
+      console.error('Invalid state token:', e.message);
+      return res.redirect(
+        `${redirectToFrontend}?facebook=error&message=Invalid+or+expired+state`
+      );
+    }
+
+    // Extract redirectUri from decoded state
+    const redirectUri = decoded.redirectUri || FACEBOOK_REDIRECT_URI;
+    
+    if (!redirectUri) {
+      return res.redirect(
+        `${redirectToFrontend}?facebook=error&message=Missing+redirect+URI`
+      );
+    }
+
+    console.log(`🔄 Processing Facebook callback for user: ${decoded.userId}`);
 
     // Exchange code for access token
     const tokenResponse = await axios.post('https://graph.facebook.com/v18.0/oauth/access_token', {
       client_id: FACEBOOK_CLIENT_ID,
       client_secret: FACEBOOK_CLIENT_SECRET,
-      redirect_uri: redirectUri || FACEBOOK_REDIRECT_URI,
+      redirect_uri: redirectUri,
       code
     });
 
@@ -69,30 +112,45 @@ const handleCallback = asyncHandler(async (req, res) => {
 
     const profile = profileResponse.data;
 
-    // Store the access token and profile info (in a real app, store in database)
-    // For now, we'll just return success
-    console.log('Facebook user connected:', {
+    // Store the access token and profile info in database
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      console.error('User not found:', decoded.userId);
+      return res.redirect(
+        `${redirectToFrontend}?facebook=error&message=User+not+found`
+      );
+    }
+
+    // Update user's Facebook account info
+    user.socialAccounts.facebook = {
+      id: profile.id,
+      username: profile.name.toLowerCase().replace(/\s+/g, ''),
+      name: profile.name,
+      accessToken: access_token,
+      refreshToken: '', // Facebook doesn't provide refresh tokens
+      expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days from now
+      connectedAt: new Date()
+    };
+
+    await user.save();
+
+    console.log('Facebook user connected and saved to database:', {
       userId: profile.id,
       name: profile.name,
-      email: profile.email
+      email: profile.email,
+      userDbId: decoded.userId
     });
 
-    res.json({
-      success: true,
-      message: 'Facebook account connected successfully',
-      profile: {
-        id: profile.id,
-        name: profile.name,
-        email: profile.email,
-        picture: profile.picture?.data?.url
-      }
-    });
+    // Redirect to frontend with success
+    return res.redirect(
+      `${redirectToFrontend}?facebook=success&message=Facebook+account+connected+successfully`
+    );
+
   } catch (error) {
     console.error('Facebook callback error:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process Facebook callback'
-    });
+    return res.redirect(
+      `${redirectToFrontend}?facebook=error&message=Failed+to+process+Facebook+callback`
+    );
   }
 });
 
@@ -101,17 +159,28 @@ const getProfile = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
   try {
-    // In a real app, retrieve from database
-    // For now, return mock data
+    const user = await User.findById(userId).select('socialAccounts.facebook');
+    
+    // Check if Facebook account exists and has required fields
+    if (!user || !user.socialAccounts.facebook || !user.socialAccounts.facebook.id || !user.socialAccounts.facebook.accessToken) {
+      return res.json({
+        success: false,
+        error: 'Facebook account not connected'
+      });
+    }
+
+    const facebookAccount = user.socialAccounts.facebook;
+    
     res.json({
       success: true,
       profile: {
-        id: 'mock_facebook_user',
-        name: 'Mock Facebook User',
-        email: 'mock@facebook.com',
+        id: facebookAccount.id,
+        name: facebookAccount.name,
+        username: facebookAccount.username,
+        connectedAt: facebookAccount.connectedAt,
         picture: {
           data: {
-            url: 'https://via.placeholder.com/200'
+            url: `https://graph.facebook.com/${facebookAccount.id}/picture?type=large`
           }
         }
       }
@@ -130,7 +199,28 @@ const disconnect = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
   try {
-    // In a real app, remove from database
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Clear Facebook account data
+    user.socialAccounts.facebook = {
+      id: undefined,
+      username: undefined,
+      name: undefined,
+      accessToken: undefined,
+      refreshToken: undefined,
+      expiresAt: undefined,
+      connectedAt: undefined
+    };
+
+    await user.save();
+
     console.log('Facebook account disconnected for user:', userId);
     
     res.json({
@@ -151,15 +241,29 @@ const validateConnection = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
   try {
-    // In a real app, check database for valid token
-    // For now, return mock validation
+    const user = await User.findById(userId).select('socialAccounts.facebook');
+    
+    // Check if Facebook account exists and has required fields
+    if (!user || !user.socialAccounts.facebook || !user.socialAccounts.facebook.id || !user.socialAccounts.facebook.accessToken) {
+      return res.json({
+        success: true,
+        connected: false,
+        profile: null
+      });
+    }
+
+    const facebookAccount = user.socialAccounts.facebook;
+    
+    // Facebook connection is considered valid if it exists in database
+    // No need to validate token with Facebook API unless specifically required
     res.json({
       success: true,
       connected: true,
       profile: {
-        id: 'mock_facebook_user',
-        name: 'Mock Facebook User',
-        email: 'mock@facebook.com'
+        id: facebookAccount.id,
+        name: facebookAccount.name,
+        username: facebookAccount.username,
+        connectedAt: facebookAccount.connectedAt
       }
     });
   } catch (error) {
