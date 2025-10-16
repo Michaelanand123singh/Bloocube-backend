@@ -7,8 +7,10 @@ steps:
       [
         "build",
         "-t", "asia-southeast1-docker.pkg.dev/$PROJECT_ID/bloocube/bloocube-backend:latest",
-        "-f", "Bloocube-backend/Dockerfile",
-        "Bloocube-backend"
+        # --- FIX: Point to the Dockerfile in the current directory ---
+        "-f", "Dockerfile",
+        # --- FIX: Use the current directory as the build context ---
+        "."
       ]
 
   # Push the image to Artifact Registry
