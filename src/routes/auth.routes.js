@@ -6,6 +6,7 @@ const { authLimiter, passwordResetLimiter } = require('../middlewares/rateLimite
 const ctrl = require('../controllers/authController');
 
 router.post('/register', (process.env.NODE_ENV === 'production' ? authLimiter : (req,res,next)=>next()), validateWithJoi(userValidation.register), ctrl.register);
+router.get('/check-email', ctrl.checkEmail);
 // Disable rate limit on login in non-production to avoid 429 during development
 router.post('/login', (process.env.NODE_ENV === 'production' ? authLimiter : (req,res,next)=>next()), validateWithJoi(userValidation.login), ctrl.login);
 

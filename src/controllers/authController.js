@@ -5,6 +5,17 @@ const jwtManager = require('../utils/jwt');
 const logger = require('../utils/logger');
 const { HTTP_STATUS, SUCCESS_MESSAGES, ERROR_MESSAGES } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
+/**
+ * Check if email already exists
+ */
+const checkEmail = asyncHandler(async (req, res) => {
+  const email = String(req.query.email || '').toLowerCase().trim();
+  if (!email) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, message: 'Email is required' });
+  }
+  const existingUser = await User.findByEmail(email);
+  return res.json({ success: true, data: { exists: !!existingUser } });
+});
 
 /**
  * Register a new user
@@ -360,6 +371,7 @@ const resendVerification = asyncHandler(async (req, res) => {
 module.exports = {
   register,
   login,
+  checkEmail,
   getProfile,
   updateProfile,
   requestPasswordReset,
