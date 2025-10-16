@@ -23,7 +23,7 @@ const generateAuthURL = asyncHandler(async (req, res) => {
     };
     const state = jwt.sign(statePayload, config.JWT_SECRET, { expiresIn: '10m' });
     
-    const scope = 'email,public_profile,pages_manage_posts,pages_read_engagement';
+    const scope = 'email,public_profile,pages_manage_posts,pages_read_engagement,pages_show_list';
     
     const authURL = `https://www.facebook.com/v18.0/dialog/oauth?` +
       `client_id=${FACEBOOK_CLIENT_ID}&` +
@@ -312,17 +312,59 @@ module.exports = {
       const pageAccessToken = selectedPage.access_token;
       const targetPageId = selectedPage.id;
 
-      // If imageUrl is provided, create a photo post; otherwise create a feed post (text/link)
+      // If imageUrl is provided, create a photo post with URL first; fallback to binary upload
       if (imageUrl) {
-        const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, null, {
-          params: {
-            url: imageUrl,
-            caption: message || '',
-            access_token: pageAccessToken
-          }
-        });
+        try {
+          const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, null, {
+            params: {
+              url: imageUrl,
+              caption: message || '',
+              access_token: pageAccessToken
+            }
+          });
 
-        return res.json({ success: true, type: 'photo', id: photoResp.data?.post_id || photoResp.data?.id, pageId: targetPageId });
+          return res.json({ success: true, type: 'photo', id: photoResp.data?.post_id || photoResp.data?.id, pageId: targetPageId });
+        } catch (err) {
+          const fbErr = err.response?.data?.error;
+          const needsBinaryUpload = fbErr?.code === 324 || fbErr?.error_subcode === 2069019;
+          if (!needsBinaryUpload) throw err;
+
+          // Attempt binary upload from local storage if path is ours
+          let localFilePath = null;
+          let filename = 'image.jpg';
+          let contentType = 'image/jpeg';
+          try {
+            const path = require('path');
+            const fs = require('fs');
+            const FormData = require('form-data');
+            const uploadsIndex = typeof imageUrl === 'string' ? imageUrl.indexOf('/uploads/') : -1;
+            if (uploadsIndex !== -1) {
+              const relativePath = imageUrl.substring(uploadsIndex + 1);
+              localFilePath = path.join(__dirname, '..', '..', relativePath);
+              filename = path.basename(localFilePath);
+            }
+            if (localFilePath && fs.existsSync(localFilePath)) {
+              const buffer = fs.readFileSync(localFilePath);
+              const form = new (FormData)();
+              form.append('source', buffer, { filename, contentType });
+              form.append('caption', message || '');
+              form.append('access_token', pageAccessToken);
+              const uploadResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, form, {
+                headers: form.getHeaders()
+              });
+              return res.json({ success: true, type: 'photo', id: uploadResp.data?.post_id || uploadResp.data?.id, pageId: targetPageId, fallback: 'binary' });
+            }
+          } catch {}
+
+          // Last resort: degrade to text-only feed post
+          const feedRespFallback = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/feed`, null, {
+            params: {
+              message: message || '',
+              access_token: pageAccessToken
+            }
+          });
+          return res.json({ success: true, type: 'feed', id: feedRespFallback.data?.id, pageId: targetPageId, fallback: 'text_only' });
+        }
       }
 
       const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/feed`, null, {

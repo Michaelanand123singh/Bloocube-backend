@@ -7,6 +7,7 @@ const { TwitterApi } = require('twitter-api-v2');
 const { downloadToBufferFromGcs } = require('../utils/storage'); // <--- CRITICAL IMPORT
 const config = require('../config/env');
 const axios = require('axios');
+const FormData = require('form-data');
 
 // Import platform services
 const twitterService = require('../services/social/twitter');
@@ -362,10 +363,61 @@ async postToTwitter(post, user) {
       }
 
       if (imageUrl) {
-        const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/photos`, null, {
-          params: { url: imageUrl, caption: message, access_token: pageAccessToken }
-        });
-        return { success: true, type: 'photo', post_id: photoResp.data?.post_id || photoResp.data?.id, pageId };
+        try {
+          const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/photos`, null, {
+            params: { url: imageUrl, caption: message, access_token: pageAccessToken }
+          });
+          return { success: true, type: 'photo', post_id: photoResp.data?.post_id || photoResp.data?.id, pageId };
+        } catch (err) {
+          const fbErr = err.response?.data?.error;
+          const needsBinaryUpload = fbErr?.code === 324 || fbErr?.error_subcode === 2069019;
+          if (!needsBinaryUpload) {
+            throw err;
+          }
+
+          // Binary upload fallback: read local file if available and upload via multipart
+          let localFilePath = null;
+          let filename = 'image.jpg';
+          let contentType = 'image/jpeg';
+
+          if (Array.isArray(post.media) && post.media.length > 0) {
+            const firstImage = post.media.find(m => m.type === 'image');
+            if (firstImage?.filename) {
+              localFilePath = path.join(__dirname, '..', '..', 'uploads', firstImage.filename);
+              filename = firstImage.filename;
+              if (firstImage.mimeType) contentType = firstImage.mimeType;
+            }
+          }
+
+          // If not found via media, try deriving from URL served by our app (e.g., /uploads/...)
+          if (!localFilePath && typeof imageUrl === 'string') {
+            const uploadsIndex = imageUrl.indexOf('/uploads/');
+            if (uploadsIndex !== -1) {
+              const relativePath = imageUrl.substring(uploadsIndex + 1); // remove leading '/'
+              localFilePath = path.join(__dirname, '..', '..', relativePath);
+              filename = path.basename(localFilePath);
+            }
+          }
+
+          if (localFilePath && fs.existsSync(localFilePath)) {
+            const buffer = fs.readFileSync(localFilePath);
+            const form = new FormData();
+            form.append('source', buffer, { filename, contentType });
+            form.append('caption', message || '');
+            form.append('access_token', pageAccessToken);
+
+            const uploadResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/photos`, form, {
+              headers: form.getHeaders()
+            });
+            return { success: true, type: 'photo', post_id: uploadResp.data?.post_id || uploadResp.data?.id, pageId, fallback: 'binary' };
+          }
+
+          // As a last resort, fall back to feed (text-only) to avoid total failure
+          const feedRespFallback = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
+            params: { message, access_token: pageAccessToken }
+          });
+          return { success: true, type: 'feed', post_id: feedRespFallback.data?.id, pageId, fallback: 'text_only' };
+        }
       }
 
       const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
