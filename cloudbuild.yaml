@@ -3,8 +3,7 @@
 steps:
   # Build the Docker image
   - name: gcr.io/cloud-builders/docker
-    args:
-      [
+    args: [
         "build",
         "-t", "asia-southeast1-docker.pkg.dev/$PROJECT_ID/bloocube/bloocube-backend:latest",
         "-f", "Bloocube-backend/Dockerfile",
@@ -18,8 +17,7 @@ steps:
   # Deploy to Cloud Run
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
-    args:
-      [
+    args: [
         "run", "deploy", "bloocube-backend",
         "--image", "asia-southeast1-docker.pkg.dev/$PROJECT_ID/bloocube/bloocube-backend:latest",
         "--region", "asia-southeast1",
