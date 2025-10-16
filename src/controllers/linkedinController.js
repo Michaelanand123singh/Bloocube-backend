@@ -313,7 +313,7 @@ class LinkedInController {
     if (!user || !user.socialAccounts?.linkedin?.accessToken) {
       return res.status(400).json({
         success: false,
-        error: 'LinkedIn account not connected'
+        
       });
     }
 

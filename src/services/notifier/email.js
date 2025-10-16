@@ -65,6 +65,47 @@ async function sendVerificationEmail(to, verifyUrl) {
   await t.sendMail(mailOptions);
 }
 
-module.exports = { sendMail, sendPasswordResetEmail, sendVerificationEmail };
+async function sendOTPEmail(to, otpCode) {
+  const t = getTransporter();
+  const mailOptions = {
+    from: config.EMAIL_FROM,
+    to,
+    subject: 'Your Bloocube Verification Code',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">Bloocube</h1>
+          <p style="color: white; margin: 10px 0 0 0; opacity: 0.9;">Your verification code</p>
+        </div>
+        
+        <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h2 style="color: #333; margin-bottom: 20px;">Complete Your Registration</h2>
+          <p style="color: #666; line-height: 1.6; margin-bottom: 25px;">
+            Thank you for signing up with Bloocube! To complete your registration, please use the verification code below:
+          </p>
+          
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; margin: 25px 0;">
+            <div style="font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px; font-family: 'Courier New', monospace;">
+              ${otpCode}
+            </div>
+          </div>
+          
+          <p style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            This code will expire in <strong>10 minutes</strong>. If you didn't request this code, please ignore this email.
+          </p>
+          
+          <div style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
+            <p style="color: #999; font-size: 12px; margin: 0;">
+              This is an automated message. Please do not reply to this email.
+            </p>
+          </div>
+        </div>
+      </div>
+    `
+  };
+  await t.sendMail(mailOptions);
+}
+
+module.exports = { sendMail, sendPasswordResetEmail, sendVerificationEmail, sendOTPEmail };
 
 

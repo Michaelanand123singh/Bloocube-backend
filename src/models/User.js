@@ -113,6 +113,35 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  twoFactorAuth: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    secret: {
+      type: String,
+      select: false
+    },
+    backupCodes: [{
+      type: String,
+      select: false
+    }]
+  },
+  otp: {
+    code: {
+      type: String,
+      select: false
+    },
+    expiresAt: {
+      type: Date,
+      select: false
+    },
+    attempts: {
+      type: Number,
+      default: 0,
+      select: false
+    }
+  },
   lastLogin: {
     type: Date,
     default: null
@@ -261,6 +290,48 @@ userSchema.statics.findByEmail = function(email) {
 // Static method to find active users
 userSchema.statics.findActive = function() {
   return this.find({ isActive: true });
+};
+
+// Instance method to generate OTP
+userSchema.methods.generateOTP = function() {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+  this.otp = {
+    code: otp,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+    attempts: 0
+  };
+  return otp;
+};
+
+// Instance method to verify OTP
+userSchema.methods.verifyOTP = function(inputOTP) {
+  if (!this.otp || !this.otp.code || !this.otp.expiresAt) {
+    return { valid: false, message: 'No OTP found' };
+  }
+
+  if (new Date() > this.otp.expiresAt) {
+    return { valid: false, message: 'OTP has expired' };
+  }
+
+  if (this.otp.attempts >= 3) {
+    return { valid: false, message: 'Too many failed attempts' };
+  }
+
+  if (this.otp.code !== inputOTP) {
+    this.otp.attempts += 1;
+    return { valid: false, message: 'Invalid OTP' };
+  }
+
+  // OTP is valid, clear it
+  this.otp = undefined;
+  this.markModified('otp');
+  return { valid: true, message: 'OTP verified successfully' };
+};
+
+// Instance method to clear OTP
+userSchema.methods.clearOTP = function() {
+  this.otp = undefined;
+  this.markModified('otp');
 };
 
 module.exports = mongoose.model('User', userSchema);

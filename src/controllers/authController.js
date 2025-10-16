@@ -61,15 +61,17 @@ const register = asyncHandler(async (req, res) => {
 
   // Do NOT auto-login; require email verification first
 
-  // Send email verification link
+  // Generate and send OTP for 2FA verification
   try {
-    const verifyToken = jwtManager.generateAccessToken({ id: user._id, type: 'email_verify' });
-    const origin = process.env.CORS_ORIGIN || 'http://localhost:3000';
-    const verifyUrl = `${origin}/verify-email/${verifyToken}`;
+    const otpCode = user.generateOTP();
+    await user.save();
+    
     const emailService = require('../services/notifier/email');
-    await emailService.sendVerificationEmail(user.email, verifyUrl);
+    await emailService.sendOTPEmail(user.email, otpCode);
+    
+    logger.info('OTP sent for user registration', { userId: user._id, email: user.email });
   } catch (e) {
-    logger.error('Failed to send verification email', e);
+    logger.error('Failed to send OTP email', e);
   }
 
   // Create notification for admin users
@@ -84,7 +86,7 @@ const register = asyncHandler(async (req, res) => {
 
   res.status(HTTP_STATUS.CREATED).json({
     success: true,
-    message: SUCCESS_MESSAGES.USER_CREATED,
+    message: 'Registration successful! Please check your email for the verification code.',
     data: {
       user: {
         id: user._id,
@@ -94,7 +96,8 @@ const register = asyncHandler(async (req, res) => {
         profile: user.profile,
         isActive: user.isActive,
         isVerified: user.isVerified
-      }
+      },
+      requiresOTP: true
     }
   });
 });
@@ -368,6 +371,120 @@ const resendVerification = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Verify OTP for registration
+ */
+const verifyOTP = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Email and OTP are required'
+    });
+  }
+
+  const user = await User.findByEmail(email).select('+otp.code +otp.expiresAt +otp.attempts');
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  const verification = user.verifyOTP(otp);
+  if (!verification.valid) {
+    await user.save(); // Save attempt count
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: verification.message
+    });
+  }
+
+  // Mark user as verified and active
+  user.isVerified = true;
+  user.isActive = true;
+  await user.save();
+
+  // Generate tokens for auto-login
+  const tokenPair = jwtManager.generateTokenPair({
+    id: user._id,
+    email: user.email,
+    role: user.role
+  });
+
+  logger.info('OTP verified successfully', { userId: user._id, email: user.email });
+
+  res.json({
+    success: true,
+    message: 'Email verified successfully! Welcome to Bloocube!',
+    data: {
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        profile: user.profile,
+        isActive: user.isActive,
+        isVerified: user.isVerified
+      },
+      tokens: tokenPair
+    }
+  });
+});
+
+/**
+ * Resend OTP for registration
+ */
+const resendOTP = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Email is required'
+    });
+  }
+
+  const user = await User.findByEmail(email).select('+otp.code +otp.expiresAt +otp.attempts');
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  if (user.isVerified) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Email is already verified'
+    });
+  }
+
+  // Generate new OTP
+  const otpCode = user.generateOTP();
+  await user.save();
+
+  // Send OTP email
+  try {
+    const emailService = require('../services/notifier/email');
+    await emailService.sendOTPEmail(user.email, otpCode);
+    
+    logger.info('OTP resent for user registration', { userId: user._id, email: user.email });
+    
+    res.json({
+      success: true,
+      message: 'Verification code sent to your email'
+    });
+  } catch (e) {
+    logger.error('Failed to resend OTP email', e);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Failed to send verification code. Please try again.'
+    });
+  }
+});
+
 module.exports = {
   register,
   login,
@@ -379,5 +496,7 @@ module.exports = {
   logout,
   deleteAccount,
   verifyEmail,
-  resendVerification
+  resendVerification,
+  verifyOTP,
+  resendOTP
 };

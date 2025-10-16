@@ -17,6 +17,10 @@ router.put('/me', authenticate, validateWithJoi(userValidation.updateProfile), c
 router.post('/request-password-reset', passwordResetLimiter, ctrl.requestPasswordReset);
 router.post('/reset-password/:token', validatePasswordResetToken, ctrl.resetPassword);
 
+// OTP verification routes
+router.post('/verify-otp', ctrl.verifyOTP);
+router.post('/resend-otp', ctrl.resendOTP);
+
 router.post('/logout', authenticate, ctrl.logout);
 // Token refresh
 router.post('/refresh', refreshToken);
