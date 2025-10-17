@@ -264,6 +264,105 @@ const getUserPosts = asyncHandler(async (req, res) => {
   });
 });
 
+// Admin change user password (admin only)
+const changeUserPassword = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  const adminId = req.userId;
+
+  // Validate input
+  if (!newPassword) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'New password is required'
+    });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Password must be at least 6 characters long'
+    });
+  }
+
+  if (newPassword.length > 128) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Password cannot exceed 128 characters'
+    });
+  }
+
+  // Find target user
+  const user = await User.findById(id).select('+password');
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  // Prevent admin from changing their own password through this endpoint
+  if (id === adminId) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Use the profile change-password endpoint to change your own password'
+    });
+  }
+
+  // Store old password for logging (optional)
+  const oldPasswordHash = user.password;
+
+  // Update password (the pre-save middleware will handle hashing)
+  user.password = newPassword;
+  await user.save();
+
+  // Log admin action
+  logger.info('Admin changed user password', {
+    adminId,
+    targetUserId: id,
+    targetUserEmail: user.email,
+    targetUserName: user.name,
+    action: 'password_changed_by_admin'
+  });
+
+  // Send email notification to user about password change
+  try {
+    const emailService = require('../services/notifier/email');
+    const adminUser = await User.findById(adminId).select('name email');
+    
+    await emailService.sendPasswordChangeNotification(
+      user.email,
+      user.name,
+      adminUser.name || 'Admin',
+      new Date().toLocaleString()
+    );
+    
+    logger.info('Password change notification email sent', {
+      targetUserEmail: user.email,
+      adminId
+    });
+  } catch (emailError) {
+    logger.error('Failed to send password change notification email', {
+      error: emailError.message,
+      targetUserEmail: user.email,
+      adminId
+    });
+    // Don't fail the request if email fails
+  }
+
+  res.json({
+    success: true,
+    message: 'Password changed successfully',
+    data: {
+      userId: id,
+      userEmail: user.email,
+      userName: user.name,
+      changedBy: adminId,
+      changedAt: new Date().toISOString()
+    }
+  });
+});
+
 module.exports = {
   dashboardStats,
   listUsers,
@@ -274,7 +373,8 @@ module.exports = {
   updateSettings,
   createUser,
   deleteUser,
-  getUserPosts
+  getUserPosts,
+  changeUserPassword
 };
 
 

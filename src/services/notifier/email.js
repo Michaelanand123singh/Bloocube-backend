@@ -106,6 +106,69 @@ async function sendOTPEmail(to, otpCode) {
   await t.sendMail(mailOptions);
 }
 
-module.exports = { sendMail, sendPasswordResetEmail, sendVerificationEmail, sendOTPEmail };
+async function sendPasswordChangeNotification(to, userName, adminName, changeTime) {
+  const t = getTransporter();
+  const mailOptions = {
+    from: config.EMAIL_FROM,
+    to,
+    subject: '🔒 Your Password Has Been Changed - Bloocube',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">🔒 Bloocube</h1>
+          <p style="color: white; margin: 10px 0 0 0; opacity: 0.9;">Password Change Notification</p>
+        </div>
+        
+        <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h2 style="color: #333; margin-bottom: 20px;">Password Changed by Admin</h2>
+          <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+            Hello <strong>${userName}</strong>,
+          </p>
+          
+          <p style="color: #666; line-height: 1.6; margin-bottom: 25px;">
+            Your account password has been changed by an administrator. If you did not request this change, please contact our support team immediately.
+          </p>
+          
+          <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 25px 0;">
+            <p style="color: #856404; margin: 0; font-weight: bold;">⚠️ Security Notice</p>
+            <p style="color: #856404; margin: 5px 0 0 0; font-size: 14px;">
+              If you did not authorize this password change, please contact support immediately as your account may have been compromised.
+            </p>
+          </div>
+          
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 25px 0;">
+            <h3 style="color: #333; margin: 0 0 15px 0; font-size: 16px;">Change Details:</h3>
+            <p style="color: #666; margin: 5px 0; font-size: 14px;"><strong>Changed by:</strong> ${adminName}</p>
+            <p style="color: #666; margin: 5px 0; font-size: 14px;"><strong>Changed at:</strong> ${changeTime}</p>
+            <p style="color: #666; margin: 5px 0; font-size: 14px;"><strong>Account:</strong> ${to}</p>
+          </div>
+          
+          <div style="background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 8px; margin: 25px 0;">
+            <p style="color: #0c5460; margin: 0; font-weight: bold;">💡 Next Steps</p>
+            <p style="color: #0c5460; margin: 5px 0 0 0; font-size: 14px;">
+              You can now log in with your new password. If you have any questions or concerns, please contact our support team.
+            </p>
+          </div>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${config.FRONTEND_URL || 'http://localhost:3000'}/login" 
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block;">
+              Login to Your Account
+            </a>
+          </div>
+          
+          <div style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 30px;">
+            <p style="color: #999; font-size: 12px; margin: 0;">
+              This is an automated security notification. Please do not reply to this email.
+            </p>
+          </div>
+        </div>
+      </div>
+    `
+  };
+  await t.sendMail(mailOptions);
+}
+
+module.exports = { sendMail, sendPasswordResetEmail, sendVerificationEmail, sendOTPEmail, sendPasswordChangeNotification };
 
 

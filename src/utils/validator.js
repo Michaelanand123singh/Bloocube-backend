@@ -81,6 +81,11 @@ const userValidation = {
 
   deleteAccount: Joi.object({
     password: Joi.string().required()
+  }),
+
+  // Admin password change (no current password required)
+  adminChangePassword: Joi.object({
+    newPassword: commonSchemas.password
   })
 };
 

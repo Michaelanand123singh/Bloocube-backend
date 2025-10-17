@@ -1,4 +1,4 @@
-// src/routes/profile.routes.js
+1// src/routes/profile.routes.js
 const router = require('express').Router();
 const { authenticate } = require('../middlewares/auth');
 const { validateWithJoi, userValidation } = require('../utils/validator');
