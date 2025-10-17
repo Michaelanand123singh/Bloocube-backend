@@ -98,9 +98,21 @@ class LinkedInController {
    * @route GET /api/auth/linkedin/callback
    */
   async handleCallback(req, res) {
-    // Frontend URL for redirection - ensure it points to creator settings
-    const baseFrontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const redirectToFrontend = `${baseFrontendUrl}/creator/settings`;
+    // Extract frontend URL from the redirectUri in the state
+    const { code, state } = req.query;
+    let redirectToFrontend = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+    
+    // Try to extract the frontend URL from the state if available
+    try {
+      const decoded = jwt.verify(state, config.JWT_SECRET);
+      if (decoded.redirectUri) {
+        const frontendUrl = decoded.redirectUri.replace('/creator/settings', '');
+        redirectToFrontend = `${frontendUrl}/creator/settings`;
+      }
+    } catch (e) {
+      // If state is invalid, use fallback URL
+      console.log('Could not decode state, using fallback frontend URL');
+    }
     
     try {
       const { code, state, error, error_description } = req.query;

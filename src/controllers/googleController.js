@@ -13,12 +13,17 @@ class GoogleController {
   }
 
   async handleCallback(req, res) {
-    const redirectBase = (config.FRONTEND_URL || 'http://localhost:3000');
+    // Use the redirectUri to determine the frontend URL instead of hardcoded config
+    const { code, state, redirectUri } = req.query;
+    if (!code || !state || !redirectUri) {
+      const fallbackBase = (config.FRONTEND_URL || 'http://localhost:3000');
+      return res.redirect(`${fallbackBase}/login?google=error&message=Missing+code+state+or+redirectUri`);
+    }
+
+    // Extract the frontend URL from the redirectUri
+    const redirectBase = redirectUri.replace('/auth/google/callback', '');
+    
     try {
-      const { code, state, redirectUri } = req.query;
-      if (!code || !state || !redirectUri) {
-        return res.redirect(`${redirectBase}/login?google=error&message=Missing+code+state+or+redirectUri`);
-      }
 
       let decoded;
       try {

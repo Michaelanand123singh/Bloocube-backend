@@ -32,7 +32,12 @@ class YouTubeController {
   async handleCallback(req, res) {
     try {
       const { code, state, redirectUri } = req.query;
-      const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+      // Extract frontend URL from redirectUri
+      let redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+      if (redirectUri) {
+        const frontendUrl = redirectUri.replace('/auth/youtube/callback', '');
+        redirectToFrontend = frontendUrl;
+      }
 
       console.log("📥 YouTube Callback query params:", { code, state, redirectUri });
 

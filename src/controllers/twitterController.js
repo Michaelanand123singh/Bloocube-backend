@@ -43,6 +43,7 @@ async generateAuthURL(req, res) {
 
 async handleCallback(req, res) {
   const { oauth_token, oauth_verifier } = req.query;
+  // For Twitter, we'll use the config fallback since we don't have redirectUri in state
   const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
 
   try {
