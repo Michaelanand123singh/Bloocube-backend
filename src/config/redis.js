@@ -15,7 +15,7 @@ class RedisClient {
     }
 
     this.client = redis.createClient({
-      url: process.env.REDIS_URL || 'redis://localhost:6379',
+      url: process.env.REDIS_URL,
       socket: {
         connectTimeout: 5000,
         reconnectStrategy: (retries) => {
@@ -113,6 +113,108 @@ class RedisClient {
     } catch (err) {
       console.log('Redis EXISTS error:', err.message);
       return false;
+    }
+  }
+
+  // Pipeline support for bulk operations
+  pipeline() {
+    if (!this.isConnected || !this.client) {
+      // Return a mock pipeline for development mode
+      return {
+        hset: () => this,
+        hget: () => this,
+        hdel: () => this,
+        lpush: () => this,
+        lpop: () => this,
+        rpop: () => this,
+        llen: () => this,
+        lrange: () => this,
+        del: () => this,
+        expire: () => this,
+        exec: async () => []
+      };
+    }
+    return this.client.multi();
+  }
+
+  // Additional Redis methods for fallback
+  async lrange(key, start, stop) {
+    if (!this.isConnected) return [];
+    try {
+      return await this.client.lRange(key, start, stop);
+    } catch (err) {
+      console.log('Redis LRANGE error:', err.message);
+      return [];
+    }
+  }
+
+  async llen(key) {
+    if (!this.isConnected) return 0;
+    try {
+      return await this.client.lLen(key);
+    } catch (err) {
+      console.log('Redis LLEN error:', err.message);
+      return 0;
+    }
+  }
+
+  async hget(key, field) {
+    if (!this.isConnected) return null;
+    try {
+      return await this.client.hGet(key, field);
+    } catch (err) {
+      console.log('Redis HGET error:', err.message);
+      return null;
+    }
+  }
+
+  async hset(key, field, value) {
+    if (!this.isConnected) return 0;
+    try {
+      return await this.client.hSet(key, field, value);
+    } catch (err) {
+      console.log('Redis HSET error:', err.message);
+      return 0;
+    }
+  }
+
+  async hdel(key, field) {
+    if (!this.isConnected) return 0;
+    try {
+      return await this.client.hDel(key, field);
+    } catch (err) {
+      console.log('Redis HDEL error:', err.message);
+      return 0;
+    }
+  }
+
+  async rpop(key) {
+    if (!this.isConnected) return null;
+    try {
+      return await this.client.rPop(key);
+    } catch (err) {
+      console.log('Redis RPOP error:', err.message);
+      return null;
+    }
+  }
+
+  async lpop(key) {
+    if (!this.isConnected) return null;
+    try {
+      return await this.client.lPop(key);
+    } catch (err) {
+      console.log('Redis LPOP error:', err.message);
+      return null;
+    }
+  }
+
+  async lpush(key, value) {
+    if (!this.isConnected) return 0;
+    try {
+      return await this.client.lPush(key, value);
+    } catch (err) {
+      console.log('Redis LPUSH error:', err.message);
+      return 0;
     }
   }
 

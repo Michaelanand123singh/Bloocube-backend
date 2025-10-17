@@ -74,4 +74,12 @@ router.post('/',
 // Get notification statistics (admin only)
 router.get('/stats', notificationController.getNotificationStats);
 
+// Announcement routes (admin only)
+router.use(authorize('admin'));
+router.get('/announcements', notificationController.getAnnouncements);
+router.post('/announcement', notificationController.createAnnouncement);
+router.get('/announcement-stats', notificationController.getAnnouncementStats);
+router.get('/email-queue-stats', notificationController.getEmailQueueStats);
+router.get('/comprehensive-stats', notificationController.getComprehensiveStats);
+
 module.exports = router;

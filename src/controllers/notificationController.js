@@ -3,6 +3,7 @@ const Notification = require('../models/Notification');
 const { HTTP_STATUS, NOTIFICATION_TYPES } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
+const AnnouncementService = require('../services/announcementService');
 
 /**
  * Get notifications for the authenticated user
@@ -262,6 +263,144 @@ const getNotificationStats = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Create announcement (admin only)
+ */
+const createAnnouncement = asyncHandler(async (req, res) => {
+  const {
+    title,
+    message,
+    targetRoles = ['creator', 'brand'],
+    priority = 'high',
+    data = {},
+    actions = [],
+    expiresAt = null,
+    sendEmail = true
+  } = req.body;
+
+  // Validate required fields
+  if (!title || !message) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Title and message are required'
+    });
+  }
+
+  // Validate target roles
+  const validRoles = ['creator', 'brand', 'admin'];
+  const invalidRoles = targetRoles.filter(role => !validRoles.includes(role));
+  if (invalidRoles.length > 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: `Invalid target roles: ${invalidRoles.join(', ')}`
+    });
+  }
+
+  // Validate priority
+  const validPriorities = ['low', 'medium', 'high', 'urgent'];
+  if (!validPriorities.includes(priority)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Invalid priority level'
+    });
+  }
+
+  const result = await AnnouncementService.createAnnouncement({
+    title,
+    message,
+    targetRoles,
+    priority,
+    data,
+    actions,
+    expiresAt,
+    sendEmail,
+    createdBy: req.userId
+  });
+
+  logger.info('Announcement created', {
+    createdBy: req.userId,
+    targetRoles,
+    notificationsCreated: result.notificationsCreated,
+    emailsQueued: result.emailsQueued
+  });
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    message: `Announcement sent to ${result.targetUserCount} users`,
+    data: result
+  });
+});
+
+/**
+ * Get announcement statistics (admin only)
+ */
+const getAnnouncementStats = asyncHandler(async (req, res) => {
+  const stats = await AnnouncementService.getAnnouncementStats();
+  
+  logger.info('Announcement stats retrieved', { requestedBy: req.userId });
+
+  res.json({
+    success: true,
+    data: stats
+  });
+});
+
+/**
+ * Get email queue statistics (admin only)
+ */
+const getEmailQueueStats = asyncHandler(async (req, res) => {
+  const stats = await AnnouncementService.getEmailQueueStats();
+  
+  logger.info('Email queue stats retrieved', { requestedBy: req.userId });
+
+  res.json({
+    success: true,
+    data: stats
+  });
+});
+
+/**
+ * Get comprehensive announcement and email statistics (admin only)
+ */
+const getComprehensiveStats = asyncHandler(async (req, res) => {
+  const stats = await AnnouncementService.getComprehensiveStats();
+  
+  logger.info('Comprehensive stats retrieved', { requestedBy: req.userId });
+
+  res.json({
+    success: true,
+    data: stats
+  });
+});
+
+/**
+ * Get list of announcements (admin only)
+ */
+const getAnnouncements = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 10, priority, targetRole, search } = req.query;
+  
+  const options = {
+    page: parseInt(page),
+    limit: parseInt(limit),
+    priority,
+    targetRole,
+    search
+  };
+
+  const result = await AnnouncementService.getAnnouncements(options);
+  
+  logger.info('Announcements retrieved', { 
+    requestedBy: req.userId,
+    count: result.announcements.length,
+    total: result.total
+  });
+
+  res.json({
+    success: true,
+    data: result
+  });
+});
+
 module.exports = {
   getNotifications,
   getUnreadCount,
@@ -269,5 +408,10 @@ module.exports = {
   markAllAsRead,
   deleteNotification,
   createNotification,
-  getNotificationStats
+  getNotificationStats,
+  createAnnouncement,
+  getAnnouncementStats,
+  getEmailQueueStats,
+  getComprehensiveStats,
+  getAnnouncements
 };

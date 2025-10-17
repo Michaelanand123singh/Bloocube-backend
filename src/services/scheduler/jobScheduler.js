@@ -5,8 +5,10 @@ const Analytics = require('../../models/Analytics');
 const AIResults = require('../../models/AI_Results');
 const Post = require('../../models/Post');
 const User = require('../../models/User');
+const Announcement = require('../../models/Announcement');
 const logger = require('../../utils/logger');
 const postController = require('../../controllers/postController');
+const emailQueue = require('../emailQueue');
 
 const jobs = [];
 
@@ -69,6 +71,29 @@ function scheduleJobs() {
       }
     } catch (err) {
       logger.error('Scheduled posts processor failed', { error: err.message });
+    }
+  }));
+
+  // Process email queue every 2 minutes
+  jobs.push(cron.schedule('*/2 * * * *', async () => {
+    try {
+      logger.info('📧 Processing email queue');
+      await emailQueue.processQueue();
+    } catch (err) {
+      logger.error('Email queue processor failed', { error: err.message });
+    }
+  }));
+
+  // Cleanup old announcements daily at 2 AM
+  jobs.push(cron.schedule('0 2 * * *', async () => {
+    try {
+      logger.info('🧹 Running announcement cleanup');
+      const result = await Announcement.cleanupOldAnnouncements();
+      if (result.deletedCount > 0) {
+        logger.info(`Cleaned up ${result.deletedCount} old announcements`);
+      }
+    } catch (err) {
+      logger.error('Announcement cleanup failed', { error: err.message });
     }
   }));
 

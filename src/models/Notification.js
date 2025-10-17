@@ -26,7 +26,8 @@ const NotificationSchema = new mongoose.Schema({
       'analytics_update',
       'ai_suggestion',
       'system_alert',
-      'user_activity'
+      'user_activity',
+      'announcement'
     ]
   },
   recipient: {
@@ -85,6 +86,7 @@ const NotificationSchema = new mongoose.Schema({
 NotificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
 NotificationSchema.index({ type: 1, createdAt: -1 });
 NotificationSchema.index({ priority: 1, createdAt: -1 });
+// Note: expiresAt already has TTL index defined in schema
 
 // Virtual for time ago
 NotificationSchema.virtual('timeAgo').get(function() {

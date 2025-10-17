@@ -289,7 +289,10 @@ const NOTIFICATION_TYPES = {
   CAMPAIGN_DEADLINE: 'campaign_deadline',
   PAYMENT_RECEIVED: 'payment_received',
   ANALYTICS_UPDATE: 'analytics_update',
-  AI_SUGGESTION: 'ai_suggestion'
+  AI_SUGGESTION: 'ai_suggestion',
+  SYSTEM_ALERT: 'system_alert',
+  USER_ACTIVITY: 'user_activity',
+  ANNOUNCEMENT: 'announcement'
 };
 
 // Email templates
