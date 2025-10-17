@@ -99,6 +99,7 @@ class NotificationService {
    */
   static async notifyUserRegistration(user) {
     return this.notifyAdmins({
+      
       title: 'New User Registration',
       message: `New ${user.role} "${user.name}" has registered on the platform.`,
       type: NOTIFICATION_TYPES.USER_ACTIVITY,
@@ -158,31 +159,99 @@ class NotificationService {
    * Create notification for new bid
    */
   static async notifyBidReceived(bid, campaign) {
-    return this.notifyAdmins({
-      title: 'New Bid Received',
-      message: `Creator submitted a bid for campaign "${campaign.title}".`,
-      type: NOTIFICATION_TYPES.BID_RECEIVED,
-      priority: 'medium',
-      data: { 
-        bidId: bid._id, 
+    const notifications = [];
+    
+    // Notify admins
+    try {
+      const adminNotifications = await this.notifyAdmins({
+        title: 'New Bid Received',
+        message: `Creator submitted a bid for campaign "${campaign.title}".`,
+        type: NOTIFICATION_TYPES.BID_RECEIVED,
+        priority: 'medium',
+        data: { 
+          bidId: bid._id, 
+          campaignId: campaign._id,
+          campaignTitle: campaign.title,
+          creatorId: bid.creator_id,
+          bidAmount: bid.bid_amount
+        },
+        relatedResource: {
+          type: 'bid',
+          id: bid._id
+        },
+        actions: [
+          { 
+            label: 'Review Bid', 
+            action: 'review_bid', 
+            url: `/bids/${bid._id}`, 
+            style: 'primary' 
+          }
+        ]
+      });
+      notifications.push(...adminNotifications);
+    } catch (error) {
+      logger.error('Failed to notify admins about new bid', error);
+    }
+    
+    // Notify the brand owner
+    try {
+      logger.info('Creating brand notification for new bid', { 
+        brandId: campaign.brand_id, 
+        bidId: bid._id,
         campaignId: campaign._id,
-        campaignTitle: campaign.title,
-        creatorId: bid.creator_id,
-        bidAmount: bid.amount
-      },
-      relatedResource: {
-        type: 'bid',
-        id: bid._id
-      },
-      actions: [
-        { 
-          label: 'Review Bid', 
-          action: 'review_bid', 
-          url: `/bids/${bid._id}`, 
-          style: 'primary' 
-        }
-      ]
-    });
+        campaignTitle: campaign.title
+      });
+      
+      const brandNotification = await this.createNotification({
+        title: 'New Bid on Your Campaign',
+        message: `You received a new bid for your campaign "${campaign.title}".`,
+        type: NOTIFICATION_TYPES.BID_RECEIVED,
+        recipientId: campaign.brand_id,
+        priority: 'high',
+        data: { 
+          bidId: bid._id, 
+          campaignId: campaign._id,
+          campaignTitle: campaign.title,
+          creatorId: bid.creator_id,
+          bidAmount: bid.bid_amount || bid.amount
+        },
+        relatedResource: {
+          type: 'bid',
+          id: bid._id
+        },
+        actions: [
+          { 
+            label: 'View Bid', 
+            action: 'view_bid', 
+            url: `/brand/campaigns?viewBids=${bid._id}`, 
+            style: 'primary' 
+          },
+          { 
+            label: 'View Campaign', 
+            action: 'view_campaign', 
+            url: `/brand/campaigns`, 
+            style: 'secondary' 
+          }
+        ]
+      });
+      notifications.push(brandNotification);
+      logger.info('Brand notification created successfully for new bid', { 
+        brandId: campaign.brand_id, 
+        bidId: bid._id,
+        campaignId: campaign._id,
+        notificationId: brandNotification._id
+      });
+    } catch (error) {
+      logger.error('Failed to notify brand about new bid', { 
+        error: error.message, 
+        stack: error.stack,
+        brandId: campaign.brand_id,
+        bidId: bid._id,
+        campaignId: campaign._id
+      });
+    }
+    
+    return notifications;
   }
 
   /**
