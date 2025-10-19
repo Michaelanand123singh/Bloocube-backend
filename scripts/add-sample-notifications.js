@@ -91,7 +91,7 @@ async function addSampleNotifications() {
 
       // Sample notification 4: System update
       const systemNotification = new Notification({
-        title: 'Platform Update',
+        title: 'Platform',
         message: 'We\'ve added new features to help you manage your campaigns better. Check out the new analytics dashboard!',
         type: 'system_alert',
         recipient: brandUser._id,
