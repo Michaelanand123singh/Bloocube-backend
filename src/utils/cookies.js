@@ -27,7 +27,7 @@ const COOKIE_CONFIG = {
   // User data cookie (non-sensitive info only)
   userData: {
     name: 'user_data',
-    httpOnly: false, // Allow frontend to read user data
+    httpOnly: true, // Allow frontend to read user data
     secure: config.NODE_ENV === 'production',
     sameSite: 'strict',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
