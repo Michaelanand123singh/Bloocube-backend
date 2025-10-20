@@ -5,6 +5,7 @@ const jwtManager = require('../utils/jwt');
 const logger = require('../utils/logger');
 const { HTTP_STATUS, SUCCESS_MESSAGES, ERROR_MESSAGES } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { setAuthCookies, clearAuthCookies, updateUserDataCookie } = require('../utils/cookies');
 /**
  * Check if email already exists
  */
@@ -145,6 +146,9 @@ const login = asyncHandler(async (req, res) => {
   user.lastLogin = new Date();
   await user.save();
 
+  // Set secure HttpOnly cookies
+  setAuthCookies(res, tokenPair.accessToken, tokenPair.refreshToken, user);
+
   logger.info('User logged in successfully', { userId: user._id, email: user.email });
 
   res.json({
@@ -160,8 +164,8 @@ const login = asyncHandler(async (req, res) => {
         isActive: user.isActive,
         isVerified: user.isVerified,
         lastLogin: user.lastLogin
-      },
-      tokens: tokenPair
+      }
+      // Tokens are now in HttpOnly cookies, not in response body
     }
   });
 });
@@ -280,8 +284,9 @@ const resetPassword = asyncHandler(async (req, res) => {
  * Logout user
  */
 const logout = asyncHandler(async (req, res) => {
-  // In a more sophisticated implementation, you might want to blacklist the token
-  // For now, we'll just return success
+  // Clear all authentication cookies
+  clearAuthCookies(res);
+  
   logger.info('User logged out', { userId: req.userId });
 
   res.json({
@@ -413,6 +418,9 @@ const verifyOTP = asyncHandler(async (req, res) => {
     role: user.role
   });
 
+  // Set secure HttpOnly cookies
+  setAuthCookies(res, tokenPair.accessToken, tokenPair.refreshToken, user);
+
   logger.info('OTP verified successfully', { userId: user._id, email: user.email });
 
   res.json({
@@ -427,8 +435,8 @@ const verifyOTP = asyncHandler(async (req, res) => {
         profile: user.profile,
         isActive: user.isActive,
         isVerified: user.isVerified
-      },
-      tokens: tokenPair
+      }
+      // Tokens are now in HttpOnly cookies, not in response body
     }
   });
 });

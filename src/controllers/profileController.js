@@ -162,11 +162,15 @@ const changePassword = asyncHandler(async (req, res) => {
   user.password = newPassword;
   await user.save();
 
+  // Clear all authentication cookies after password change for security
+  const { clearAuthCookies } = require('../utils/cookies');
+  clearAuthCookies(res);
+
   logger.info('User password changed', { userId });
 
   res.json({
     success: true,
-    message: 'Password changed successfully'
+    message: 'Password changed successfully. Please log in again with your new password.'
   });
 });
 

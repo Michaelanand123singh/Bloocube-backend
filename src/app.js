@@ -6,6 +6,7 @@ const morgan = require("morgan");
 const compression = require("compression");
 const mongoSanitize = require("express-mongo-sanitize");
 const hpp = require("hpp");
+const cookieParser = require("cookie-parser");
 const config = require("./config/env");
 const { errorHandler, notFound } = require("./middlewares/errorHandler");
 const { dynamicLimiter } = require("./middlewares/rateLimiter");
@@ -84,6 +85,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(mongoSanitize());
 app.use(hpp());
 app.use(compression());

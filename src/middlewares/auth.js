@@ -4,6 +4,7 @@ const jwtManager = require('../utils/jwt');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 const { HTTP_STATUS, ERROR_MESSAGES } = require('../utils/constants');
+const { getAccessTokenFromCookie, getRefreshTokenFromCookie, getUserDataFromCookie } = require('../utils/cookies');
 
 /**
  * Authentication middleware
@@ -11,36 +12,52 @@ const { HTTP_STATUS, ERROR_MESSAGES } = require('../utils/constants');
  */
 const authenticate = async (req, res, next) => {
   try {
-    console.log("🔑 Auth header received:", {
+    console.log("🔑 Auth check:", {
       hasAuthHeader: !!req.headers.authorization,
-      authHeader: req.headers.authorization ? 'Bearer ***' : 'missing',
+      hasAccessTokenCookie: !!getAccessTokenFromCookie(req),
       url: req.originalUrl,
       method: req.method
     });
 
-    const authHeader = req.headers.authorization;
+    let token = null;
+    let user = null;
+
+    // First, try to get token from HttpOnly cookie (preferred method)
+    token = getAccessTokenFromCookie(req);
     
-    if (!authHeader) {
+    // Fallback to Authorization header for API clients
+    if (!token && req.headers.authorization) {
+      try {
+        token = jwtManager.extractTokenFromHeader(req.headers.authorization);
+      } catch (headerError) {
+        // Ignore header parsing errors, continue with cookie check
+        console.log("Header token parsing failed, trying cookies only");
+      }
+    }
+    
+    if (!token) {
       return res.status(HTTP_STATUS.UNAUTHORIZED).json({
         success: false,
         message: ERROR_MESSAGES.INVALID_TOKEN
       });
     }
 
-    // Extract token from header
-    const token = jwtManager.extractTokenFromHeader(authHeader);
-    
     // Verify token
     const decoded = jwtManager.verifyAccessToken(token);
     
-    // Find user
-    const user = await User.findById(decoded.id).select('-password');
+    // Try to get user from cookie first (faster)
+    user = getUserDataFromCookie(req);
     
-    if (!user) {
-      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
-        success: false,
-        message: ERROR_MESSAGES.USER_NOT_FOUND
-      });
+    // If no user data in cookie or user ID doesn't match, fetch from database
+    if (!user || user.id !== decoded.id) {
+      user = await User.findById(decoded.id).select('-password');
+      
+      if (!user) {
+        return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+          success: false,
+          message: ERROR_MESSAGES.USER_NOT_FOUND
+        });
+      }
     }
 
     if (!user.isActive) {
@@ -52,12 +69,13 @@ const authenticate = async (req, res, next) => {
 
     // Attach user to request
     req.user = user;
-    req.userId = user._id;
+    req.userId = user._id || user.id;
     
     logger.info('User authenticated', { 
-      userId: user._id, 
+      userId: user._id || user.id, 
       email: user.email, 
-      role: user.role 
+      role: user.role,
+      authMethod: token === getAccessTokenFromCookie(req) ? 'cookie' : 'header'
     });
     
     next();
@@ -106,19 +124,38 @@ const authorize = (...roles) => {
  */
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    let token = null;
+    let user = null;
+
+    // First, try to get token from HttpOnly cookie
+    token = getAccessTokenFromCookie(req);
     
-    if (!authHeader) {
+    // Fallback to Authorization header
+    if (!token && req.headers.authorization) {
+      try {
+        token = jwtManager.extractTokenFromHeader(req.headers.authorization);
+      } catch (headerError) {
+        // Ignore header parsing errors
+      }
+    }
+    
+    if (!token) {
       return next();
     }
 
-    const token = jwtManager.extractTokenFromHeader(authHeader);
     const decoded = jwtManager.verifyAccessToken(token);
-    const user = await User.findById(decoded.id).select('-password');
+    
+    // Try to get user from cookie first
+    user = getUserDataFromCookie(req);
+    
+    // If no user data in cookie or user ID doesn't match, fetch from database
+    if (!user || user.id !== decoded.id) {
+      user = await User.findById(decoded.id).select('-password');
+    }
     
     if (user && user.isActive) {
       req.user = user;
-      req.userId = user._id;
+      req.userId = user._id || user.id;
     }
     
     next();
@@ -269,16 +306,21 @@ const checkBidOwnership = async (req, res, next) => {
  */
 const refreshToken = async (req, res, next) => {
   try {
-    const { refreshToken } = req.body;
+    // Get refresh token from cookie first, then from body
+    let refreshTokenValue = getRefreshTokenFromCookie(req);
     
-    if (!refreshToken) {
+    if (!refreshTokenValue && req.body.refreshToken) {
+      refreshTokenValue = req.body.refreshToken;
+    }
+    
+    if (!refreshTokenValue) {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({
         success: false,
         message: 'Refresh token is required'
       });
     }
     
-    const decoded = jwtManager.verifyRefreshToken(refreshToken);
+    const decoded = jwtManager.verifyRefreshToken(refreshTokenValue);
     const user = await User.findById(decoded.id);
     
     if (!user || !user.isActive) {
@@ -299,15 +341,26 @@ const refreshToken = async (req, res, next) => {
     user.lastLogin = new Date();
     await user.save();
     
+    // Set new cookies
+    const { setAuthCookies } = require('../utils/cookies');
+    setAuthCookies(res, tokenPair.accessToken, tokenPair.refreshToken, user);
+    
     logger.info('Token refreshed', { userId: user._id });
     
     res.json({
       success: true,
       message: 'Token refreshed successfully',
       data: {
-        accessToken: tokenPair.accessToken,
-        refreshToken: tokenPair.refreshToken,
-        expiresIn: tokenPair.expiresIn
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          profile: user.profile,
+          isActive: user.isActive,
+          isVerified: user.isVerified
+        }
+        // Tokens are now in HttpOnly cookies
       }
     });
   } catch (error) {
