@@ -5,6 +5,7 @@ const User = require('../models/User');
 const logger = require('../utils/logger');
 const { HTTP_STATUS, ERROR_MESSAGES } = require('../utils/constants');
 const { getAccessTokenFromCookie, getRefreshTokenFromCookie, getUserDataFromCookie } = require('../utils/cookies');
+const tokenBlacklist = require('../services/tokenBlacklist');
 
 /**
  * Authentication middleware
@@ -40,6 +41,11 @@ const authenticate = async (req, res, next) => {
         success: false,
         message: ERROR_MESSAGES.INVALID_TOKEN
       });
+    }
+
+    // Check blacklist
+    if (await tokenBlacklist.isBlacklisted(token)) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({ success: false, message: ERROR_MESSAGES.INVALID_TOKEN });
     }
 
     // Verify token
@@ -320,6 +326,14 @@ const refreshToken = async (req, res, next) => {
       });
     }
     
+    // Check blacklist before verifying
+    if (await tokenBlacklist.isBlacklisted(refreshTokenValue)) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        message: ERROR_MESSAGES.INVALID_TOKEN
+      });
+    }
+
     const decoded = jwtManager.verifyRefreshToken(refreshTokenValue);
     const user = await User.findById(decoded.id);
     
@@ -341,6 +355,9 @@ const refreshToken = async (req, res, next) => {
     user.lastLogin = new Date();
     await user.save();
     
+    // Blacklist the old refresh token to prevent reuse
+    try { await tokenBlacklist.blacklistToken(refreshTokenValue); } catch {}
+
     // Set new cookies
     const { setAuthCookies } = require('../utils/cookies');
     setAuthCookies(res, tokenPair.accessToken, tokenPair.refreshToken, user);

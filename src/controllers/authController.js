@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const { HTTP_STATUS, SUCCESS_MESSAGES, ERROR_MESSAGES } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { setAuthCookies, clearAuthCookies, updateUserDataCookie } = require('../utils/cookies');
+const tokenBlacklist = require('../services/tokenBlacklist');
 /**
  * Check if email already exists
  */
@@ -284,6 +285,16 @@ const resetPassword = asyncHandler(async (req, res) => {
  * Logout user
  */
 const logout = asyncHandler(async (req, res) => {
+  // Attempt to blacklist current access and refresh tokens (if present)
+  try {
+    const access = req.cookies?.access_token;
+    const refresh = req.cookies?.refresh_token;
+    if (access) await tokenBlacklist.blacklistToken(access);
+    if (refresh) await tokenBlacklist.blacklistToken(refresh);
+  } catch (e) {
+    logger.warn('Failed to blacklist tokens during logout');
+  }
+
   // Clear all authentication cookies
   clearAuthCookies(res);
   

@@ -1,6 +1,7 @@
 // src/routes/auth.routes.js
 const router = require('express').Router();
 const { authenticate, validatePasswordResetToken, refreshToken } = require('../middlewares/auth');
+const tokenBlacklist = require('../services/tokenBlacklist');
 const { validateWithJoi, userValidation, validationRules, validateRequest } = require('../utils/validator');
 const { authLimiter, passwordResetLimiter } = require('../middlewares/rateLimiter');
 const ctrl = require('../controllers/authController');
@@ -24,6 +25,17 @@ router.post('/resend-otp', ctrl.resendOTP);
 router.post('/logout', authenticate, ctrl.logout);
 // Token refresh
 router.post('/refresh', refreshToken);
+
+// Optional: endpoint to revoke current access token immediately
+router.post('/revoke', authenticate, async (req, res) => {
+  try {
+    const access = req.cookies?.access_token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (access) await tokenBlacklist.blacklistToken(access);
+    return res.json({ success: true, message: 'Access token revoked' });
+  } catch {
+    return res.status(500).json({ success: false, message: 'Failed to revoke token' });
+  }
+});
 
 router.get('/verify/:token', ctrl.verifyEmail);
 router.post('/resend-verification', authenticate, ctrl.resendVerification);
