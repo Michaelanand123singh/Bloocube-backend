@@ -61,7 +61,8 @@ class InstagramController {
     try {
       const decoded = jwt.verify(state, config.JWT_SECRET);
       if (decoded.redirectUri) {
-        const frontendUrl = decoded.redirectUri.replace('/creator/settings', '');
+        // Extract the base URL from the callback URL
+        const frontendUrl = decoded.redirectUri.replace('/auth/instagram/callback', '');
         redirectToFrontend = `${frontendUrl}/creator/settings`;
       }
     } catch (e) {

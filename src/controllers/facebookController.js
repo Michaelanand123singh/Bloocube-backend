@@ -56,7 +56,8 @@ const handleCallback = asyncHandler(async (req, res) => {
   try {
     const decoded = jwt.verify(state, process.env.JWT_SECRET);
     if (decoded.redirectUri) {
-      const frontendUrl = decoded.redirectUri.replace('/creator/settings', '');
+      // Extract the base URL from the callback URL
+      const frontendUrl = decoded.redirectUri.replace('/auth/facebook/callback', '');
       redirectToFrontend = `${frontendUrl}/creator/settings`;
     }
   } catch (e) {

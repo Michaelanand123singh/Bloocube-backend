@@ -106,7 +106,8 @@ class LinkedInController {
     try {
       const decoded = jwt.verify(state, config.JWT_SECRET);
       if (decoded.redirectUri) {
-        const frontendUrl = decoded.redirectUri.replace('/creator/settings', '');
+        // Extract the base URL from the callback URL
+        const frontendUrl = decoded.redirectUri.replace('/auth/linkedin/callback', '');
         redirectToFrontend = `${frontendUrl}/creator/settings`;
       }
     } catch (e) {
