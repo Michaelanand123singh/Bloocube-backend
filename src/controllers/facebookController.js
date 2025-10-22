@@ -3,6 +3,7 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const config = require('../config/env');
 const User = require('../models/User');
+const { getCreatorSettingsUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 // Facebook OAuth configuration
 const FACEBOOK_CLIENT_ID = config.FACEBOOK_APP_ID;
@@ -58,7 +59,7 @@ const generateAuthURL = asyncHandler(async (req, res) => {
 const handleCallback = asyncHandler(async (req, res) => {
   // Extract frontend URL from the redirectUri in the state
   const { code, state } = req.query;
-  let redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+  let redirectToFrontend = getCreatorSettingsUrl();
   
     // Try to extract the frontend URL from the state if available
     try {
@@ -67,7 +68,7 @@ const handleCallback = asyncHandler(async (req, res) => {
         // The redirectUri in state is the backend callback URL, not frontend
         // We should use the config.FRONTEND_URL instead
         console.log('🔍 Facebook state decoded, using config.FRONTEND_URL:', config.FRONTEND_URL);
-        redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+        redirectToFrontend = getCreatorSettingsUrl();
       }
     } catch (e) {
       // If state is invalid, use fallback URL
@@ -81,14 +82,14 @@ const handleCallback = asyncHandler(async (req, res) => {
     if (error) {
       console.log('Facebook OAuth error:', error, error_description);
       return res.redirect(
-        `${redirectToFrontend}/creator/settings?facebook=error&message=${encodeURIComponent(error_description || error)}`
+        buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: error_description || error })
       );
     }
 
     // Validate required parameters
     if (!code || !state) {
       return res.redirect(
-        `${redirectToFrontend}/creator/settings?facebook=error&message=Missing+code+or+state`
+        buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: 'Missing code or state' })
       );
     }
 
@@ -99,7 +100,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     } catch (e) {
       console.error('Invalid state token:', e.message);
       return res.redirect(
-        `${redirectToFrontend}/creator/settings?facebook=error&message=Invalid+or+expired+state`
+        buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: 'Invalid or expired state' })
       );
     }
 
@@ -108,7 +109,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     
     if (!redirectUri) {
       return res.redirect(
-        `${redirectToFrontend}/creator/settings?facebook=error&message=Missing+redirect+URI`
+        buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: 'Missing redirect URI' })
       );
     }
 
@@ -139,7 +140,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     if (!user) {
       console.error('User not found:', decoded.userId);
         return res.redirect(
-          `${redirectToFrontend}/creator/settings?facebook=error&message=User+not+found`
+          buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: 'User not found' })
         );
     }
 
@@ -165,13 +166,13 @@ const handleCallback = asyncHandler(async (req, res) => {
 
     // Redirect to frontend with success
     return res.redirect(
-      `${redirectToFrontend}/creator/settings?facebook=success&message=Facebook+account+connected+successfully`
+      buildRedirectUrl(redirectToFrontend, { facebook: 'success', message: 'Facebook account connected successfully' })
     );
 
   } catch (error) {
     console.error('Facebook callback error:', error.response?.data || error.message);
     return res.redirect(
-      `${redirectToFrontend}/creator/settings?facebook=error&message=Failed+to+process+Facebook+callback`
+      buildRedirectUrl(redirectToFrontend, { facebook: 'error', message: 'Failed to process Facebook callback' })
     );
   }
 });
@@ -302,104 +303,5 @@ module.exports = {
   handleCallback,
   getProfile,
   disconnect,
-  validateConnection,
-  // New export: postContent to publish to a connected Facebook Page
-  postContent: asyncHandler(async (req, res) => {
-    const userId = req.userId;
-    const { message, imageUrl, pageId } = req.body;
-
-    try {
-      const user = await User.findById(userId).select('socialAccounts.facebook');
-      if (!user || !user.socialAccounts?.facebook?.accessToken) {
-        return res.status(400).json({ success: false, error: 'Facebook account not connected' });
-      }
-
-      const userAccessToken = user.socialAccounts.facebook.accessToken;
-
-      // Fetch user pages to obtain a Page Access Token
-      const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
-        params: { access_token: userAccessToken, fields: 'id,name,access_token' }
-      });
-
-      const pages = pagesResp.data?.data || [];
-      if (pages.length === 0) {
-        return res.status(400).json({ success: false, error: 'No Facebook Pages found for this user' });
-      }
-
-      const selectedPage = pageId ? pages.find(p => p.id === pageId) : pages[0];
-      if (!selectedPage) {
-        return res.status(400).json({ success: false, error: 'Specified Page not found for this user' });
-      }
-
-      const pageAccessToken = selectedPage.access_token;
-      const targetPageId = selectedPage.id;
-
-      // If imageUrl is provided, create a photo post with URL first; fallback to binary upload
-      if (imageUrl) {
-        try {
-          const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, null, {
-            params: {
-              url: imageUrl,
-              caption: message || '',
-              access_token: pageAccessToken
-            }
-          });
-
-          return res.json({ success: true, type: 'photo', id: photoResp.data?.post_id || photoResp.data?.id, pageId: targetPageId });
-        } catch (err) {
-          const fbErr = err.response?.data?.error;
-          const needsBinaryUpload = fbErr?.code === 324 || fbErr?.error_subcode === 2069019;
-          if (!needsBinaryUpload) throw err;
-
-          // Attempt binary upload from local storage if path is ours
-          let localFilePath = null;
-          let filename = 'image.jpg';
-          let contentType = 'image/jpeg';
-          try {
-            const path = require('path');
-            const fs = require('fs');
-            const FormData = require('form-data');
-            const uploadsIndex = typeof imageUrl === 'string' ? imageUrl.indexOf('/uploads/') : -1;
-            if (uploadsIndex !== -1) {
-              const relativePath = imageUrl.substring(uploadsIndex + 1);
-              localFilePath = path.join(__dirname, '..', '..', relativePath);
-              filename = path.basename(localFilePath);
-            }
-            if (localFilePath && fs.existsSync(localFilePath)) {
-              const buffer = fs.readFileSync(localFilePath);
-              const form = new (FormData)();
-              form.append('source', buffer, { filename, contentType });
-              form.append('caption', message || '');
-              form.append('access_token', pageAccessToken);
-              const uploadResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/photos`, form, {
-                headers: form.getHeaders()
-              });
-              return res.json({ success: true, type: 'photo', id: uploadResp.data?.post_id || uploadResp.data?.id, pageId: targetPageId, fallback: 'binary' });
-            }
-          } catch {}
-
-          // Last resort: degrade to text-only feed post
-          const feedRespFallback = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/feed`, null, {
-            params: {
-              message: message || '',
-              access_token: pageAccessToken
-            }
-          });
-          return res.json({ success: true, type: 'feed', id: feedRespFallback.data?.id, pageId: targetPageId, fallback: 'text_only' });
-        }
-      }
-
-      const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${targetPageId}/feed`, null, {
-        params: {
-          message: message || '',
-          access_token: pageAccessToken
-        }
-      });
-
-      return res.json({ success: true, type: 'feed', id: feedResp.data?.id, pageId: targetPageId });
-    } catch (error) {
-      const apiError = error.response?.data || { message: error.message };
-      return res.status(400).json({ success: false, error: apiError?.error?.message || apiError.message || 'Failed to post content', details: apiError });
-    }
-  })
+  validateConnection
 };

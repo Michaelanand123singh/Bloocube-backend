@@ -2,6 +2,7 @@ const instagramService = require('../services/social/instagram');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const config = require('../config/env');
+const { getCreatorSettingsUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 // Helper function to serialize any variable into a string for URL query parameters
 const serializeErrorToUrl = (err) => {
@@ -63,7 +64,7 @@ class InstagramController {
   async handleCallback(req, res) {
     // Extract frontend URL from the redirectUri in the state
     const { code, state } = req.query;
-    let redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+    let redirectToFrontend = getCreatorSettingsUrl();
     
     // Try to extract the frontend URL from the state if available
     try {
@@ -72,7 +73,7 @@ class InstagramController {
         // The redirectUri in state is the backend callback URL, not frontend
         // We should use the config.FRONTEND_URL instead
         console.log('🔍 Instagram state decoded, using config.FRONTEND_URL:', config.FRONTEND_URL);
-        redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+        redirectToFrontend = getCreatorSettingsUrl();
       }
     } catch (e) {
       // If state is invalid, use fallback URL
@@ -86,14 +87,14 @@ class InstagramController {
       if (error) {
         console.log('Instagram OAuth error:', error, error_description);
         return res.redirect(
-          `${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(error_description || error)}`
+          buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: error_description || error })
         );
       }
 
       // Validate required parameters
       if (!code || !state) {
         return res.redirect(
-          `${redirectToFrontend}/creator/settings?instagram=error&message=Missing+code+or+state`
+          buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: 'Missing code or state' })
         );
       }
 
@@ -104,7 +105,7 @@ class InstagramController {
       } catch (e) {
         console.error('Invalid state token:', e.message);
         return res.redirect(
-          `${redirectToFrontend}/creator/settings?instagram=error&message=Invalid+or+expired+state`
+          buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: 'Invalid or expired state' })
         );
       }
 
@@ -113,7 +114,7 @@ class InstagramController {
       
       if (!redirectUri) {
         return res.redirect(
-          `${redirectToFrontend}/creator/settings?instagram=error&message=Missing+redirect+URI`
+          buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: 'Missing redirect URI' })
         );
       }
 
@@ -124,7 +125,7 @@ class InstagramController {
 
       if (!tokenResult.success) {
         const detail = serializeErrorToUrl(tokenResult.error);
-        return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(detail)}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: detail }));
       }
 
       // Update the user record in the database with all necessary info
@@ -146,244 +147,197 @@ class InstagramController {
       );
 
       console.log("✅ Instagram user updated in DB");
-      return res.redirect(`${redirectToFrontend}/creator/settings?instagram=success&message=Instagram+account+connected+successfully`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { instagram: 'success', message: 'Instagram account connected successfully' }));
     } catch (error) {
       console.error("🔥 Instagram callback error:", error);
       const msg = serializeErrorToUrl(error);
-      return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(msg)}`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { instagram: 'error', message: msg }));
     }
   }
 
-// Disconnect Instagram account
-async disconnect(req, res) {
-  try {
-    const userId = req.userId || req.user?.id;
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
-    // Clear Instagram account data
-    user.socialAccounts.instagram = {
-      accessToken: undefined,
-      igAccountId: undefined,
-      username: undefined,
-      name: undefined,
-      profileImageUrl: undefined,
-      connectedAt: undefined,
-      isBasicDisplay: undefined,
-      limitations: undefined
-    };
-
-    await user.save();
-
-    console.log('Instagram account disconnected for user:', userId);
-    
-    res.json({
-      success: true,
-      message: 'Instagram account disconnected successfully'
-    });
-  } catch (error) {
-    console.error('Instagram disconnect error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to disconnect Instagram account'
-    });
-  }
-}
-
-// A helper function to manage API calls
-async _performApiAction(req, res, action) {
-  try {
-      const user = await User.findById(req.user.id);
-      const instagramAccount = user?.socialAccounts?.instagram;
-
-      if (!instagramAccount?.accessToken || !instagramAccount?.igAccountId) {
-          return res.status(400).json({ success: false, error: 'Instagram account not connected properly. Please reconnect.' });
-      }
+  // Disconnect Instagram account
+  async disconnect(req, res) {
+    try {
+      const userId = req.userId || req.user?.id;
+      const user = await User.findById(userId);
       
-      // Pass both token and account ID to the action
-      await action(instagramAccount.accessToken, instagramAccount.igAccountId);
-
-  } catch (error) {
-      console.error(`❌ Instagram ${action.name} error:`, error);
-      res.status(500).json({ success: false, error: `Failed to perform Instagram action: ${error.message}` });
-  }
-}
-
-// UPDATED: postContent
-async postContent(req, res) {
-  await this._performApiAction(req, res, async (accessToken, igAccountId) => {
-      const { type, mediaUrl, caption } = req.body;
-      let result;
-
-      if (type === "post") {
-          result = await instagramService.postContent(accessToken, igAccountId, { mediaUrl, caption });
-      } else {
-          // Add postStory logic here if needed
-          return res.status(400).json({ success: false, error: 'Invalid post type.' });
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
       }
 
-      if (!result.success) {
-          return res.status(400).json({ success: false, error: result.error, details: result.raw });
-      }
-      res.json({ success: true, message: 'Content posted successfully', data: result });
-  });
-}
+      // Clear Instagram account data
+      user.socialAccounts.instagram = {
+        accessToken: undefined,
+        igAccountId: undefined,
+        username: undefined,
+        name: undefined,
+        profileImageUrl: undefined,
+        connectedAt: undefined,
+        isBasicDisplay: undefined,
+        limitations: undefined
+      };
 
-// Get Instagram profile
-async getProfile(req, res) {
-  try {
-    const userId = req.userId || req.user?.id;
-    const user = await User.findById(userId).select('socialAccounts.instagram');
-    
-    if (!user || !user.socialAccounts?.instagram || !user.socialAccounts.instagram.accessToken) {
-      return res.json({
+      await user.save();
+
+      console.log('Instagram account disconnected for user:', userId);
+      
+      res.json({
+        success: true,
+        message: 'Instagram account disconnected successfully'
+      });
+    } catch (error) {
+      console.error('Instagram disconnect error:', error);
+      res.status(500).json({
         success: false,
-        error: 'Instagram account not connected'
+        error: 'Failed to disconnect Instagram account'
       });
     }
+  }
 
-    const instagramAccount = user.socialAccounts.instagram;
-    
-    res.json({
-      success: true,
-      profile: {
-        id: instagramAccount.igAccountId || instagramAccount.id,
-        username: instagramAccount.username,
-        name: instagramAccount.name,
-        profileImageUrl: instagramAccount.profileImageUrl,
-        connectedAt: instagramAccount.connectedAt,
-        isBasicDisplay: instagramAccount.isBasicDisplay || false,
-        limitations: instagramAccount.limitations || null
-      }
-    });
-  } catch (error) {
-    console.error('Instagram profile fetch error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch Instagram profile'
+  // A helper function to manage API calls
+  async _performApiAction(req, res, action) {
+    try {
+        const user = await User.findById(req.user.id);
+        const instagramAccount = user?.socialAccounts?.instagram;
+
+        if (!instagramAccount?.accessToken || !instagramAccount?.igAccountId) {
+            return res.status(400).json({ success: false, error: 'Instagram account not connected properly. Please reconnect.' });
+        }
+        
+        // Pass both token and account ID to the action
+        await action(instagramAccount.accessToken, instagramAccount.igAccountId);
+
+    } catch (error) {
+        console.error(`❌ Instagram ${action.name} error:`, error);
+        res.status(500).json({ success: false, error: `Failed to perform Instagram action: ${error.message}` });
+    }
+  }
+
+  // UPDATED: postContent
+  async postContent(req, res) {
+    await this._performApiAction(req, res, async (accessToken, igAccountId) => {
+        const { type, mediaUrl, caption } = req.body;
+        let result;
+
+        if (type === "post") {
+            result = await instagramService.postContent(accessToken, igAccountId, { mediaUrl, caption });
+        } else {
+            // Add postStory logic here if needed
+            return res.status(400).json({ success: false, error: 'Invalid post type.' });
+        }
+
+        if (!result.success) {
+            return res.status(400).json({ success: false, error: result.error, details: result.raw });
+        }
+        res.json({ success: true, message: 'Content posted successfully', data: result });
     });
   }
-}
 
-// UPDATED: getInsights
-async getInsights(req, res) {
-  await this._performApiAction(req, res, async (accessToken, igAccountId) => {
-      const result = await instagramService.getInsights(accessToken, igAccountId);
+  // Get Instagram profile
+  async getProfile(req, res) {
+    try {
+      const userId = req.userId || req.user?.id;
+      const user = await User.findById(userId).select('socialAccounts.instagram');
+      
+      if (!user || !user.socialAccounts?.instagram || !user.socialAccounts.instagram.accessToken) {
+        return res.json({
+          success: false,
+          error: 'Instagram account not connected'
+        });
+      }
+
+      const instagramAccount = user.socialAccounts.instagram;
+      
+      res.json({
+        success: true,
+        profile: {
+          id: instagramAccount.igAccountId || instagramAccount.id,
+          username: instagramAccount.username,
+          name: instagramAccount.name,
+          profileImageUrl: instagramAccount.profileImageUrl,
+          connectedAt: instagramAccount.connectedAt,
+          isBasicDisplay: instagramAccount.isBasicDisplay || false,
+          limitations: instagramAccount.limitations || null
+        }
+      });
+    } catch (error) {
+      console.error('Instagram profile fetch error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch Instagram profile'
+      });
+    }
+  }
+
+  // UPDATED: getInsights
+  async getInsights(req, res) {
+    await this._performApiAction(req, res, async (accessToken, igAccountId) => {
+        const result = await instagramService.getInsights(accessToken, igAccountId);
+
+        if (!result.success) {
+            return res.status(400).json({ success: false, error: result.error });
+        }
+        res.json({ success: true, insights: result.insights });
+    });
+  }
+
+  // Upload Media
+  async uploadMedia(req, res) {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId);
+
+      if (!user || !user.socialAccounts?.instagram?.accessToken) {
+        return res.status(400).json({ success: false, error: 'Instagram account not connected' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No media file provided' });
+      }
+
+      const result = await instagramService.uploadMedia(user.socialAccounts.instagram.accessToken, req.file.buffer, req.file.mimetype);
 
       if (!result.success) {
-          return res.status(400).json({ success: false, error: result.error });
+        return res.status(400).json({ success: false, error: result.error });
       }
-      res.json({ success: true, insights: result.insights });
-  });
-}
 
-  // Upload Media
-  async uploadMedia(req, res) {
-    try {
-      const userId = req.user.id;
-      const user = await User.findById(userId);
+      res.json({ success: true, mediaId: result.media_id, mediaUrl: result.media_url });
+    } catch (error) {
+      console.error('Instagram media upload error:', error);
+      res.status(500).json({ success: false, error: 'Failed to upload media' });
+    }
+  }
 
-      if (!user || !user.socialAccounts?.instagram?.accessToken) {
-        return res.status(400).json({ success: false, error: 'Instagram account not connected' });
-      }
+  // Validate Instagram connection
+  async validateConnection(req, res) {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId);
 
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No media file provided' });
-      }
+      if (!user || !user.socialAccounts?.instagram?.accessToken) {
+        return res.status(400).json({ success: false, error: 'Instagram account not connected' });
+      }
 
-      const result = await instagramService.uploadMedia(user.socialAccounts.instagram.accessToken, req.file.buffer, req.file.mimetype);
+      const validation = await instagramService.validateToken(user.socialAccounts.instagram.accessToken);
 
-      if (!result.success) {
-        return res.status(400).json({ success: false, error: result.error });
-      }
+      if (!validation.valid) {
+        return res.status(400).json({ success: false, error: validation.error });
+      }
 
-      res.json({ success: true, mediaId: result.media_id, mediaUrl: result.media_url });
-    } catch (error) {
-      console.error('Instagram media upload error:', error);
-      res.status(500).json({ success: false, error: 'Failed to upload media' });
-    }
-  }
-
-  // Get Instagram profile
- 
-
-  // Validate Instagram connection
-  async validateConnection(req, res) {
-    try {
-      const userId = req.user.id;
-      const user = await User.findById(userId);
-
-      if (!user || !user.socialAccounts?.instagram?.accessToken) {
-        return res.status(400).json({ success: false, error: 'Instagram account not connected' });
-      }
-
-      const validation = await instagramService.validateToken(user.socialAccounts.instagram.accessToken);
-
-      if (!validation.valid) {
-        return res.status(400).json({ success: false, error: validation.error });
-      }
-
-      res.json({ 
-        success: true, 
-        valid: true, 
-        user: validation.user,
-        canPost: validation.canPost
-      });
-    } catch (error) {
-      console.error('Instagram validation error:', error);
-      res.status(500).json({ success: false, error: 'Failed to validate Instagram connection' });
-    }
-  }
-
-  // Get Instagram insights
-  async getInsights(req, res) {
-    try {
-      const userId = req.user.id;
-      const user = await User.findById(userId);
-
-      if (!user || !user.socialAccounts?.instagram?.accessToken) {
-        return res.status(400).json({ success: false, error: 'Instagram account not connected' });
-      }
-
-      // Check if token is expired and refresh if needed
-      let accessToken = user.socialAccounts.instagram.accessToken;
-      if (user.socialAccounts.instagram.expiresAt < new Date()) {
-        const refreshResult = await instagramService.refreshToken(user.socialAccounts.instagram.refreshToken);
-        if (refreshResult.success) {
-          accessToken = refreshResult.access_token;
-          await User.findByIdAndUpdate(userId, {
-            $set: {
-              'socialAccounts.instagram.accessToken': refreshResult.access_token,
-              'socialAccounts.instagram.refreshToken': refreshResult.refresh_token,
-              'socialAccounts.instagram.expiresAt': new Date(Date.now() + refreshResult.expires_in * 1000)
-            }
-          });
-        } else {
-          return res.status(400).json({
-            success: false,
-            error: 'Failed to refresh Instagram token'
-          });
-        }
-      }
-
-      const result = await instagramService.getInsights(accessToken);
-
-      if (!result.success) {
-        return res.status(400).json({ success: false, error: result.error });
-      }
-
-      res.json({ success: true, insights: result.insights });
-    } catch (error) {
-      console.error('Instagram insights error:', error);
-      res.status(500).json({ success: false, error: 'Failed to get Instagram insights' });
-    }
-  }
+      res.json({ 
+        success: true, 
+        valid: true, 
+        user: validation.user,
+        canPost: validation.canPost
+      });
+    } catch (error) {
+      console.error('Instagram validation error:', error);
+      res.status(500).json({ success: false, error: 'Failed to validate Instagram connection' });
+    }
+  }
 }
 
 module.exports = new InstagramController();

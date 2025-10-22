@@ -10,7 +10,9 @@ const config = {
   MONGODB_URI: process.env.MONGODB_URI,
   
   // Redis Configuration
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  REDIS_URL: process.env.REDIS_URL || (process.env.NODE_ENV === 'production' 
+    ? 'redis://default:LEOTcIzsTcgNOcxAQx6WRqD2CNQ6whN0@redis-16077.c280.us-central1-2.gce.redns.redis-cloud.com:16077'
+    : 'redis://localhost:6379'),
   
 
   // JWT Configuration
@@ -24,7 +26,9 @@ const config = {
   EMAIL_PORT: process.env.EMAIL_PORT || 587,
   EMAIL_USER: process.env.EMAIL_USER,
   EMAIL_PASS: process.env.EMAIL_PASS,
-  EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@bloocube.com',
+  EMAIL_FROM: process.env.EMAIL_FROM || (process.env.NODE_ENV === 'production' 
+    ? 'noreply@bloocube.com' 
+    : 'noreply@localhost'),
   
   // Social Media API Keys
   INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID,
@@ -56,7 +60,9 @@ const config = {
   TWITTER_SCOPES: process.env.TWITTER_SCOPES || 'tweet.read tweet.write users.read offline.access',
   
   // AI Service Configuration (Updated for stateless flow)
-  AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:8001',
+  AI_SERVICE_URL: process.env.AI_SERVICE_URL || (process.env.NODE_ENV === 'production' 
+    ? 'https://api-ai-services.bloocube.com' 
+    : 'http://localhost:8001'),
   AI_SERVICE_API_KEY: process.env.AI_SERVICE_API_KEY || 'sdjlfnewuo23984uu3fl@Uekjdfnlsfh39w8erun',
   
   // File Upload Configuration
@@ -77,8 +83,12 @@ const config = {
   RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS || 100,
   
   // CORS Configuration
-  CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com',
-  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' 
+    ? 'https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com'
+    : 'http://localhost:3000,https://bloocube.com,https://admin.bloocube.com,https://api-backend.bloocube.com,https://api-ai-services.bloocube.com'),
+  FRONTEND_URL: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' 
+    ? 'https://bloocube.com' 
+    : 'http://localhost:3000'),
   
   // Logging
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',

@@ -5,6 +5,7 @@ const { TwitterApi } = require('twitter-api-v2');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const config = require('../config/env');
+const { getCreatorSettingsUrl, getCallbackUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 class TwitterController {
   // Generate Twitter OAuth URL
@@ -22,8 +23,7 @@ async generateAuthURL(req, res) {
     }
 
     // Get redirectUri from request (POST body or GET query)
-    const redirectUri = req.body?.redirectUri || req.query?.redirectUri || 
-      `${config.FRONTEND_URL || 'http://localhost:3000'}/auth/twitter/callback`;
+    const redirectUri = req.body?.redirectUri || req.query?.redirectUri || getCallbackUrl('twitter');
 
     const client = new TwitterApi({
       appKey: config.TWITTER_APP_KEY,
@@ -82,7 +82,7 @@ async generateAuthURL(req, res) {
 async handleCallback(req, res) {
   const { oauth_token, oauth_verifier, code, state, redirectUri } = req.query;
   // For Twitter, we'll use the config fallback since we don't have redirectUri in state
-  const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+  const redirectToFrontend = getCreatorSettingsUrl();
 
   try {
     // Handle OAuth 1.0a flow (primary)
@@ -134,7 +134,7 @@ async handleCallback(req, res) {
         }
       });
 
-      return res.redirect(`${redirectToFrontend}/creator/settings?twitter=success`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'success' }));
     }
     
     // Handle OAuth 2.0 flow (fallback)
@@ -145,7 +145,7 @@ async handleCallback(req, res) {
         decodedState = jwt.verify(state, config.JWT_SECRET);
       } catch (error) {
         console.error("❌ Invalid state:", error);
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=Invalid+state`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'error', message: 'Invalid state' }));
       }
 
       // Exchange code for token using OAuth 2.0
@@ -153,7 +153,7 @@ async handleCallback(req, res) {
       
       if (!tokenResult.success) {
         const detail = tokenResult.error || 'Token exchange failed';
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(detail)}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'error', message: detail }));
       }
 
       // Get user profile
@@ -161,7 +161,7 @@ async handleCallback(req, res) {
       
       if (!profileResult.success) {
         const detail = profileResult.error || 'Profile fetch failed';
-        return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(detail)}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'error', message: detail }));
       }
 
       // Update user's Twitter account
@@ -178,14 +178,14 @@ async handleCallback(req, res) {
         }
       });
 
-      return res.redirect(`${redirectToFrontend}/creator/settings?twitter=success`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'success' }));
     }
 
     // No valid parameters
     throw new Error('Missing OAuth parameters');
   } catch (error) {
     console.error("🔥 Twitter callback error:", error);
-    return res.redirect(`${redirectToFrontend}/creator/settings?twitter=error&message=${encodeURIComponent(error.message)}`);
+    return res.redirect(buildRedirectUrl(redirectToFrontend, { twitter: 'error', message: error.message }));
   }
 }
 

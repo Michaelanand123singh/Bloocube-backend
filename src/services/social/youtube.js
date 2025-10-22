@@ -269,7 +269,7 @@ class YouTubeService {
     const uploadResponse = await axios.put(uploadUrl, videoBuffer, {
       headers: {
         'Content-Length': videoBuffer.length,
-        'Content-Type': 'video/'
+        'Content-Type': 'video/mp4' // ✅ FIX: Proper Content-Type header
       },
       onUploadProgress: (progressEvent) => {
         const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);

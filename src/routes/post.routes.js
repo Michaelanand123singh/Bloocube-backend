@@ -54,6 +54,16 @@ const uploadMiddleware = [
 // Create a new post
 router.post('/',
   authenticate,
+  (req, res, next) => {
+    // Ensure user is authenticated before proceeding
+    if (!req.user || !req.userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User authentication required'
+      });
+    }
+    next();
+  },
   uploadMiddleware,
   postValidation,
   postController.createPost

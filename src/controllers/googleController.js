@@ -2,6 +2,7 @@ const googleService = require('../services/social/google');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const config = require('../config/env');
+const { getFrontendUrl, getLoginUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 class GoogleController {
   async generateAuthURL(req, res) {
@@ -16,8 +17,8 @@ class GoogleController {
     // Use the redirectUri to determine the frontend URL instead of hardcoded config
     const { code, state, redirectUri } = req.query;
     if (!code || !state || !redirectUri) {
-      const fallbackBase = (config.FRONTEND_URL || 'http://localhost:3000');
-      return res.redirect(`${fallbackBase}/login?google=error&message=Missing+code+state+or+redirectUri`);
+      const loginUrl = getLoginUrl();
+      return res.redirect(buildRedirectUrl(loginUrl, { google: 'error', message: 'Missing code state or redirectUri' }));
     }
 
     // Extract the frontend URL from the redirectUri
@@ -29,19 +30,19 @@ class GoogleController {
       try {
         decoded = jwt.verify(state, config.JWT_SECRET);
       } catch (e) {
-        return res.redirect(`${redirectBase}/login?google=error&message=Invalid+state`);
+        return res.redirect(buildRedirectUrl(`${redirectBase}/login`, { google: 'error', message: 'Invalid state' }));
       }
 
       const tokenResult = await googleService.exchangeCodeForToken(code, redirectUri);
       if (!tokenResult.success) {
         const detail = tokenResult.raw?.error_description || tokenResult.error;
-        return res.redirect(`${redirectBase}/login?google=error&message=${encodeURIComponent(detail || 'Token+exchange+failed')}`);
+        return res.redirect(buildRedirectUrl(`${redirectBase}/login`, { google: 'error', message: detail || 'Token exchange failed' }));
       }
 
       const userInfo = await googleService.getUserInfo(tokenResult.access_token);
       if (!userInfo.success) {
         const detail = userInfo.raw?.error_description || userInfo.error;
-        return res.redirect(`${redirectBase}/login?google=error&message=${encodeURIComponent(detail || 'Userinfo+failed')}`);
+        return res.redirect(buildRedirectUrl(`${redirectBase}/login`, { google: 'error', message: detail || 'Userinfo failed' }));
       }
 
       // Find or create user
@@ -74,9 +75,16 @@ class GoogleController {
       });
       
       // Redirect back to frontend callback with token for auto-login (mirrors LinkedIn flow)
-      return res.redirect(`${redirectBase}/auth/google/callback?google=success&token=${encodeURIComponent(tokenPair.accessToken)}&message=${encodeURIComponent('Google+login+successful')}`);
+      return res.redirect(buildRedirectUrl(`${redirectBase}/auth/google/callback`, { 
+        google: 'success', 
+        token: tokenPair.accessToken, 
+        message: 'Google login successful' 
+      }));
     } catch (error) {
-      return res.redirect(`${redirectBase}/login?google=error&message=${encodeURIComponent(error.message || 'Callback+failed')}`);
+      return res.redirect(buildRedirectUrl(`${redirectBase}/login`, { 
+        google: 'error', 
+        message: error.message || 'Callback failed' 
+      }));
     }
   }
 }

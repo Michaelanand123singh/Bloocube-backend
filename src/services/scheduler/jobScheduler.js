@@ -9,6 +9,7 @@ const Announcement = require('../../models/Announcement');
 const logger = require('../../utils/logger');
 const postController = require('../../controllers/postController');
 const emailQueue = require('../emailQueue');
+const { retryPost, updatePostWithRetryInfo } = require('../../utils/retryLogic');
 
 const jobs = [];
 
@@ -42,29 +43,27 @@ function scheduleJobs() {
             continue;
           }
 
-          const result = await postController.postToPlatform(post, user);
+          // ✅ ADD: Use retry logic for scheduled posts
+          const result = await retryPost(async () => {
+            return await postController.executePlatformPost(post, user);
+          }, post.platform, post);
 
-          if (!result.success) {
-            post.status = 'failed';
-            post.publishing = {
-              ...post.publishing,
-              published_at: new Date(),
+          // ✅ ADD: Update post with retry information
+          await updatePostWithRetryInfo(post, result);
+          
+          if (result.success) {
+            logger.info('✅ Scheduled post published', { 
+              postId: post._id, 
+              platform: post.platform,
+              retryCount: post.publishing.retry_count || 0
+            });
+          } else {
+            logger.error('Failed to publish scheduled post after retries', { 
+              postId: post._id, 
               error: result.error,
-            };
-            await post.save();
-            logger.error('Failed to publish scheduled post', { postId: post._id, error: result.error });
-            continue;
+              retryCount: post.publishing.retry_count || 0
+            });
           }
-
-          post.status = 'published';
-          post.publishing = {
-            ...post.publishing,
-            published_at: new Date(),
-            platform_post_id: result.tweet_id || result.thread_id || result.video_id || result.post_id || null,
-            platform_url: result.url || null,
-          };
-          await post.save();
-          logger.info('✅ Scheduled post published', { postId: post._id, platform: post.platform });
         } catch (e) {
           logger.error('Error processing scheduled post', { postId: post._id, error: e.message });
         }

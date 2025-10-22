@@ -3,6 +3,7 @@ const youtubeService = require('../services/social/youtube');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const config = require('../config/env');
+const { getCreatorSettingsUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 class YouTubeController {
   // Generate YouTube OAuth URL
@@ -41,17 +42,17 @@ class YouTubeController {
     try {
       const { code, state, redirectUri } = req.query;
       // Extract frontend URL from redirectUri
-      let redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+      let redirectToFrontend = getCreatorSettingsUrl();
       if (redirectUri) {
         const frontendUrl = redirectUri.replace('/auth/youtube/callback', '');
-        redirectToFrontend = frontendUrl;
+        redirectToFrontend = `${frontendUrl}/creator/settings`;
       }
 
       console.log("📥 YouTube Callback query params:", { code, state, redirectUri });
 
       if (!code || !state || !redirectUri) {
         const msg = 'Missing code, state or redirectUri';
-        return res.redirect(`${redirectToFrontend}/creator/settings?youtube=error&message=${encodeURIComponent(msg)}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { youtube: 'error', message: msg }));
       }
 
       // Verify state
@@ -62,7 +63,7 @@ class YouTubeController {
       } catch (error) {
         console.error("❌ Invalid state:", error);
         const msg = 'Invalid state';
-        return res.redirect(`${redirectToFrontend}/creator/settings?youtube=error&message=${encodeURIComponent(msg)}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { youtube: 'error', message: msg }));
       }
 
       // Exchange code for token
@@ -72,7 +73,7 @@ class YouTubeController {
 
       if (!tokenResult.success) {
         const detail = tokenResult.raw?.error_description || tokenResult.raw?.detail || tokenResult.error || 'Token exchange failed';
-        return res.redirect(`${redirectToFrontend}/creator/settings?youtube=error&message=${encodeURIComponent(String(detail))}`);
+        return res.redirect(buildRedirectUrl(redirectToFrontend, { youtube: 'error', message: String(detail) }));
       }
 
       // Try to get channel info, but don't fail the connection if it errors
@@ -121,12 +122,12 @@ class YouTubeController {
 
       console.log("✅ User updated in DB");
 
-      return res.redirect(`${redirectToFrontend}/creator/settings?youtube=success`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { youtube: 'success' }));
     } catch (error) {
       console.error("🔥 YouTube callback error:", error);
-      const redirectToFrontend = config.FRONTEND_URL || 'http://localhost:3000';
+      const redirectToFrontend = getCreatorSettingsUrl();
       const msg = error?.message || 'Callback failed';
-      return res.redirect(`${redirectToFrontend}/creator/settings?youtube=error&message=${encodeURIComponent(String(msg))}`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { youtube: 'error', message: String(msg) }));
     }
   }
 

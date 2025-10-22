@@ -34,8 +34,16 @@ const findAvailablePort = async (startPort) => {
 (async () => {
   try {
     console.log('Starting server...');
-    await connectDB();
-    console.log('Database connected');
+    
+    try {
+      await connectDB();
+      console.log('Database connected');
+    } catch (dbError) {
+      console.log('Database connection failed:', dbError.message);
+      if (process.env.NODE_ENV === 'production') {
+        throw dbError;
+      }
+    }
     
     // Try to connect to Redis, but don't fail if it's not available
     try {
@@ -56,10 +64,12 @@ const findAvailablePort = async (startPort) => {
         console.log(`Note: Port ${PORT} was in use, using port ${availablePort} instead`);
       }
       try {
+        console.log('Scheduling cron jobs...');
         scheduleJobs();
-        console.log('Cron jobs scheduled');
+        console.log('Cron jobs scheduled successfully');
       } catch (e) {
-        console.error('Failed to schedule cron jobs:', e);
+        console.error('Failed to schedule cron jobs:', e.message);
+        console.error('Stack trace:', e.stack);
       }
     });
 
@@ -84,6 +94,7 @@ const findAvailablePort = async (startPort) => {
     });
   } catch (error) {
     console.error('Server startup error:', error);
+    console.error('Error stack:', error.stack);
     process.exit(1);
   }
 })();

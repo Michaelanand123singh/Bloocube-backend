@@ -3,6 +3,7 @@ const linkedinService = require('../services/social/linkedin');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const config = require('../config/env');
+const { getCreatorSettingsUrl, buildRedirectUrl } = require('../utils/urlUtils');
 
 class LinkedInController {
   /**
@@ -120,7 +121,7 @@ class LinkedInController {
   async handleCallback(req, res) {
     // Use consistent frontend URL from config
     const { code, state } = req.query;
-    const redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+    const redirectToFrontend = getCreatorSettingsUrl();
     
     try {
       const { code, state, error, error_description } = req.query;
@@ -129,14 +130,14 @@ class LinkedInController {
       if (error) {
         console.log('LinkedIn OAuth error:', error, error_description);
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=${encodeURIComponent(error_description || error)}`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: error_description || error })
         );
       }
 
       // Validate required parameters
       if (!code || !state) {
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=Missing+code+or+state`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: 'Missing code or state' })
         );
       }
 
@@ -182,7 +183,7 @@ class LinkedInController {
         console.error('JWT Secret length:', config.JWT_SECRET ? config.JWT_SECRET.length : 'undefined');
         console.error('Error details:', e);
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=Invalid+or+expired+state`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: 'Invalid or expired state' })
         );
       }
 
@@ -191,7 +192,7 @@ class LinkedInController {
       
       if (!redirectUri) {
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=Missing+redirect+URI`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: 'Missing redirect URI' })
         );
       }
 
@@ -204,7 +205,7 @@ class LinkedInController {
         const detail = tokenResult.raw?.error_description || tokenResult.error;
         console.error('Token exchange failed:', detail);
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=${encodeURIComponent(detail || 'Token+exchange+failed')}`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: detail || 'Token exchange failed' })
         );
       }
 
@@ -217,7 +218,7 @@ class LinkedInController {
         const detail = profileResult.raw?.message || profileResult.error;
         console.error('Profile fetch failed:', detail);
         return res.redirect(
-          `${redirectToFrontend}?linkedin=error&message=${encodeURIComponent(detail || 'Profile+fetch+failed')}`
+          buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: detail || 'Profile fetch failed' })
         );
       }
 
@@ -262,12 +263,16 @@ class LinkedInController {
       console.log('🔑 Session token generated for auto-login');
 
       // STEP 5: Redirect to frontend with success and session token
-      return res.redirect(`${redirectToFrontend}?linkedin=success&token=${encodeURIComponent(sessionToken)}&message=LinkedIn+connected+and+logged+in+successfully`);
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { 
+        linkedin: 'success', 
+        token: sessionToken, 
+        message: 'LinkedIn connected and logged in successfully' 
+      }));
 
     } catch (error) {
       console.error('❌ LinkedIn callback error:', error);
       return res.redirect(
-        `${redirectToFrontend}?linkedin=error&message=${encodeURIComponent(error.message || 'Callback+failed')}`
+        buildRedirectUrl(redirectToFrontend, { linkedin: 'error', message: error.message || 'Callback failed' })
       );
     }
   }

@@ -12,7 +12,7 @@ router.get('/profile', authenticate, facebookController.getProfile);
 router.post('/disconnect', authenticate, facebookController.disconnect);
 router.get('/validate', authenticate, facebookController.validateConnection);
 
-// Facebook content posting (protected)
-router.post('/post', authenticate, facebookController.postContent);
+// Facebook content posting is handled by the main postController
+// router.post('/post', authenticate, facebookController.postContent);
 
 module.exports = router;

@@ -8,6 +8,9 @@ const { downloadToBufferFromGcs } = require('../utils/storage'); // <--- CRITICA
 const config = require('../config/env');
 const axios = require('axios');
 const FormData = require('form-data');
+const { validatePostData, sanitizeContent, getRecommendations } = require('../utils/postValidation');
+const { retryPost, updatePostWithRetryInfo } = require('../utils/retryLogic');
+const { handlePlatformError, ERROR_CODES } = require('../utils/standardErrorHandler');
 
 // Import platform services
 const twitterService = require('../services/social/twitter');
@@ -31,7 +34,7 @@ class PostController {
     this.createPost = this.createPost.bind(this); // Already correctly bound
   }
 
-  // Helper method to post to platform
+  // Helper method to post to platform with retry logic
   async postToPlatform(post, user) {
     try {
       console.log(`🚀 Posting to ${post.platform}:`, {
@@ -42,33 +45,10 @@ class PostController {
         userEmail: user.email
       });
 
-      let platformResult = { success: false, error: 'Platform not supported' };
-
-      switch (post.platform) {
-        case 'twitter':
-          console.log('🐦 Calling Twitter posting...');
-          platformResult = await this.postToTwitter(post, user);
-          break;
-        case 'youtube':
-          console.log('📺 Calling YouTube posting...');
-          platformResult = await this.postToYouTube(post, user);
-          break;
-        case 'instagram':
-          console.log('📸 Calling Instagram posting...');
-          platformResult = await this.postToInstagram(post, user);
-          break;
-        case 'linkedin':
-          console.log('💼 Calling LinkedIn posting...');
-          platformResult = await this.postToLinkedIn(post, user);
-          break;
-        case 'facebook':
-          console.log('👥 Calling Facebook posting...');
-          platformResult = await this.postToFacebook(post, user);
-          break;
-        default:
-          console.log('❓ Unsupported platform:', post.platform);
-          platformResult = { success: false, error: 'Unsupported platform' };
-      }
+      // ✅ ADD: Use retry logic for posting
+      const platformResult = await retryPost(async () => {
+        return await this.executePlatformPost(post, user);
+      }, post.platform, post);
 
       console.log(`📊 Platform posting result for ${post.platform}:`, platformResult);
       return platformResult;
@@ -81,6 +61,39 @@ class PostController {
     }
   }
 
+  // Execute the actual platform posting (extracted for retry logic)
+  async executePlatformPost(post, user) {
+    let platformResult = { success: false, error: 'Platform not supported' };
+
+    switch (post.platform) {
+      case 'twitter':
+        console.log('🐦 Calling Twitter posting...');
+        platformResult = await this.postToTwitter(post, user);
+        break;
+      case 'youtube':
+        console.log('📺 Calling YouTube posting...');
+        platformResult = await this.postToYouTube(post, user);
+        break;
+      case 'instagram':
+        console.log('📸 Calling Instagram posting...');
+        platformResult = await this.postToInstagram(post, user);
+        break;
+      case 'linkedin':
+        console.log('💼 Calling LinkedIn posting...');
+        platformResult = await this.postToLinkedIn(post, user);
+        break;
+      case 'facebook':
+        console.log('👥 Calling Facebook posting...');
+        platformResult = await this.postToFacebook(post, user);
+        break;
+      default:
+        console.log('❓ Unsupported platform:', post.platform);
+        platformResult = { success: false, error: 'Unsupported platform' };
+    }
+
+    return platformResult;
+  }
+
   // Enhanced Twitter posting with proper data extraction
 // In src/controllers/postController.js
 
@@ -90,18 +103,17 @@ async postToTwitter(post, user) {
   try {
     console.log('--- 🐦 DEBUGGING postToTwitter ---');
     
-    // ✅ FIX: Check for the new OAuth 1.0a credentials
-    if (!user.socialAccounts?.twitter?.oauth_accessToken || !user.socialAccounts?.twitter?.oauth_accessSecret) {
-      console.log('❌ Twitter account not connected or missing OAuth 1.0a tokens for user:', user._id);
+    // ✅ FIX: Check for OAuth 2.0 access token
+    if (!user.socialAccounts?.twitter?.accessToken) {
+      console.log('❌ Twitter account not connected or missing access token for user:', user._id);
       return { success: false, error: 'Twitter account not connected' };
     }
 
-    // ✅ FIX: Initialize the twitter-api-v2 client with the user's permanent tokens
+    // ✅ FIX: Initialize the twitter-api-v2 client with OAuth 2.0 credentials
     const client = new TwitterApi({
-      appKey: config.TWITTER_APP_KEY,
-      appSecret: config.TWITTER_APP_SECRET,
-      accessToken: user.socialAccounts.twitter.oauth_accessToken,
-      accessSecret: user.socialAccounts.twitter.oauth_accessSecret,
+      clientId: config.TWITTER_CLIENT_ID,
+      clientSecret: config.TWITTER_CLIENT_SECRET,
+      accessToken: user.socialAccounts.twitter.accessToken,
     });
 
     const mediaIds = [];
@@ -139,10 +151,11 @@ async postToTwitter(post, user) {
     console.log('🏁 Final result from Twitter:', result);
     return { success: true, tweet_id: result.data.id, text: result.data.text };
 
-  } catch (error) {
-    console.error('❌ CRITICAL ERROR in postToTwitter:', error);
-    return { success: false, error: error.message || 'Failed to post to Twitter' };
-  }
+    } catch (error) {
+      console.error('❌ CRITICAL ERROR in postToTwitter:', error);
+      const errorResponse = handlePlatformError(error, 'Twitter');
+      return { success: false, error: errorResponse.error.message, errorCode: errorResponse.error.code };
+    }
 }
 
 
@@ -247,9 +260,11 @@ async postToTwitter(post, user) {
       }
     } catch (error) {
       console.error('❌ YouTube posting error:', error);
+      const errorResponse = handlePlatformError(error, 'YouTube');
       return {
         success: false,
-        error: error.message || 'Failed to post to YouTube'
+        error: errorResponse.error.message,
+        errorCode: errorResponse.error.code
       };
     }
   }
@@ -323,7 +338,13 @@ async postToTwitter(post, user) {
 
       return { success: true, ig_media_id: result.id, type: 'image' };
     } catch (error) {
-      return { success: false, error: error.message || 'Instagram posting failed' };
+      console.error('❌ Instagram posting error:', error);
+      const errorResponse = handlePlatformError(error, 'Instagram');
+      return { 
+        success: false, 
+        error: errorResponse.error.message,
+        errorCode: errorResponse.error.code
+      };
     }
   }
 
@@ -425,18 +446,33 @@ async postToTwitter(post, user) {
       });
       return { success: true, type: 'feed', post_id: feedResp.data?.id, pageId };
     } catch (error) {
-      const api = error.response?.data;
-      return { success: false, error: api?.error?.message || error.message || 'Facebook posting failed', raw: api };
+      console.error('❌ Facebook posting error:', error);
+      const errorResponse = handlePlatformError(error, 'Facebook');
+      return { 
+        success: false, 
+        error: errorResponse.error.message,
+        errorCode: errorResponse.error.code
+      };
     }
   }
 
   // Post to LinkedIn
   async postToLinkedIn(post, user) {
     try {
+      // ✅ FIX: Early validation for LinkedIn account connection
       if (!user.socialAccounts?.linkedin?.accessToken) {
         return {
           success: false,
           error: 'LinkedIn account not connected'
+        };
+      }
+
+      // ✅ FIX: Early validation for LinkedIn user ID
+      const authorId = user.socialAccounts?.linkedin?.id;
+      if (!authorId) {
+        return { 
+          success: false, 
+          error: 'LinkedIn user ID not found. Please reconnect your LinkedIn account.' 
         };
       }
 
@@ -472,10 +508,6 @@ async postToTwitter(post, user) {
         contentLength: content.length,
         hasMedia: !!(post.media && post.media.length > 0)
       });
-      const authorId = user.socialAccounts?.linkedin?.id;
-      if (!authorId) {
-        return { success: false, error: 'LinkedIn user ID not found.' };
-      }
       const authorUrn = `urn:li:person:${authorId}`;
     let mediaPayload = null;
     if (post.media && post.media.length > 0) {
@@ -516,9 +548,11 @@ async postToTwitter(post, user) {
       }
     } catch (error) {
       console.error('❌ LinkedIn posting error:', error);
+      const errorResponse = handlePlatformError(error, 'LinkedIn');
       return {
         success: false,
-        error: error.message || 'Failed to post to LinkedIn'
+        error: errorResponse.error.message,
+        errorCode: errorResponse.error.code
       };
     }
   }
@@ -556,6 +590,17 @@ async postToTwitter(post, user) {
           success: false,
           message: 'Validation failed',
           errors: errors.array()
+        });
+      }
+
+      // ✅ ADD: Comprehensive post validation
+      const postValidation = validatePostData(req.body);
+      if (!postValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Post validation failed',
+          errors: postValidation.errors,
+          warnings: postValidation.warnings
         });
       }
 
@@ -624,6 +669,14 @@ async postToTwitter(post, user) {
         }
       }
 
+      // ✅ ADD: Sanitize content
+      if (parsedContent.caption) {
+        parsedContent.caption = sanitizeContent(parsedContent.caption, platform);
+      }
+
+      // ✅ ADD: Get recommendations
+      const recommendations = getRecommendations({ ...req.body, content: parsedContent }, platform);
+
 
       console.log('📝 Content parsing result:', {
         originalContent: content,
@@ -636,7 +689,7 @@ async postToTwitter(post, user) {
         content: parsedContent,
         platform,
         post_type,
-        author: req.user._id,
+        author: req.userId,
         status: postStatus,
         // The `scheduledAt` field is set through the `scheduling` subdocument
         // in the schema's pre-save hook, but for `createPost` (drafts), it's initially
@@ -656,7 +709,9 @@ async postToTwitter(post, user) {
       res.status(201).json({
         success: true,
         message: 'Post created successfully',
-        post
+        post,
+        recommendations: recommendations.length > 0 ? recommendations : undefined,
+        warnings: postValidation.warnings.length > 0 ? postValidation.warnings : undefined
       });
 
     } catch (error) {
@@ -853,7 +908,7 @@ async postToTwitter(post, user) {
 
       const [drafts, total] = await Promise.all([
         Post.find({
-          author: req.user._id,
+          author: req.userId,
           status: 'draft'
         })
           .sort({ lastEditedAt: -1 })
@@ -861,7 +916,7 @@ async postToTwitter(post, user) {
           .limit(limitNum)
           .populate('author', 'username email'),
         Post.countDocuments({
-          author: req.user._id,
+          author: req.userId,
           status: 'draft'
         })
       ]);
@@ -897,7 +952,7 @@ async postToTwitter(post, user) {
 
       const [scheduled, total] = await Promise.all([
         Post.find({
-          author: req.user._id,
+          author: req.userId,
           status: 'scheduled'
         })
           .sort({ 'scheduling.scheduled_at': 1, createdAt: -1 })
@@ -905,7 +960,7 @@ async postToTwitter(post, user) {
           .limit(limitNum)
           .populate('author', 'username email'),
         Post.countDocuments({
-          author: req.user._id,
+          author: req.userId,
           status: 'scheduled'
         })
       ]);
@@ -996,7 +1051,7 @@ async postToTwitter(post, user) {
         content,
         platform,
         post_type,
-        author: req.user._id,
+        author: req.userId,
         status: 'published',
         platformContent: parsedPlatformContent,
         tags: parsedTags,
@@ -1136,7 +1191,7 @@ async postToTwitter(post, user) {
         content,
         platform,
         post_type,
-        author: req.user._id,
+        author: req.userId,
         status: 'scheduled',
         // The `scheduledAt` field is deprecated in favor of `scheduling.scheduled_at`
         // but keeping it for now if other parts of the app rely on it.
@@ -1176,7 +1231,7 @@ async postToTwitter(post, user) {
   async publishPostById(req, res) {
     try {
       const { id } = req.params;
-      const userId = req.user._id;
+      const userId = req.userId;
 
       console.log('🚀 Publishing existing post:', { postId: id, userId });
 
@@ -1264,7 +1319,7 @@ async postToTwitter(post, user) {
     try {
       const { id } = req.params;
       const { scheduledAt, scheduled_for, timezone } = req.body;
-      const userId = req.user._id;
+      const userId = req.userId;
 
       // Validate request
       const errors = validationResult(req);
@@ -1350,7 +1405,7 @@ async postToTwitter(post, user) {
   // Test Twitter connection
   async testTwitterConnection(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = req.userId;
       console.log('🔍 Testing Twitter connection for user:', userId);
 
       const user = await User.findById(userId);
