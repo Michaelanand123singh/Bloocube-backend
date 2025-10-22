@@ -56,8 +56,8 @@ const config = {
   TWITTER_SCOPES: process.env.TWITTER_SCOPES || 'tweet.read tweet.write users.read offline.access',
   
   // AI Service Configuration (Updated for stateless flow)
-  AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'https://api-ai-services.bloocube.com',
-  AI_SERVICE_API_KEY: process.env.AI_SERVICE_API_KEY || 'default-dev-key',
+  AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:8001',
+  AI_SERVICE_API_KEY: process.env.AI_SERVICE_API_KEY || 'sdjlfnewuo23984uu3fl@Uekjdfnlsfh39w8erun',
   
   // File Upload Configuration
   MAX_FILE_SIZE: process.env.MAX_FILE_SIZE || '10MB',
