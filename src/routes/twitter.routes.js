@@ -8,8 +8,7 @@ const { upload, persistUploads } = require('../middlewares/upload');
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
 router.get('/auth-url', authenticate, twitterController.generateAuthURL);
-
-// router.post('/auth-url', authenticate, twitterController.generateAuthURL); // POST preferred for auth URL
+router.post('/auth-url', authenticate, twitterController.generateAuthURL); // Support both GET and POST
 router.get('/callback', twitterController.handleCallback);
 
 // Test route

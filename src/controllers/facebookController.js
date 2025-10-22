@@ -15,6 +15,14 @@ const generateAuthURL = asyncHandler(async (req, res) => {
   const { redirectUri } = req.body;
 
   try {
+    // Check if Facebook credentials are configured
+    if (!FACEBOOK_CLIENT_ID || !FACEBOOK_CLIENT_SECRET) {
+      return res.status(400).json({
+        success: false,
+        error: 'Facebook API credentials not configured. Please set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in environment variables.'
+      });
+    }
+
     // Create a JWT state token for security
     const statePayload = {
       userId,
@@ -50,20 +58,21 @@ const generateAuthURL = asyncHandler(async (req, res) => {
 const handleCallback = asyncHandler(async (req, res) => {
   // Extract frontend URL from the redirectUri in the state
   const { code, state } = req.query;
-  let redirectToFrontend = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+  let redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
   
-  // Try to extract the frontend URL from the state if available
-  try {
-    const decoded = jwt.verify(state, process.env.JWT_SECRET);
-    if (decoded.redirectUri) {
-      // Extract the base URL from the callback URL
-      const frontendUrl = decoded.redirectUri.replace('/auth/facebook/callback', '');
-      redirectToFrontend = `${frontendUrl}/creator/settings`;
+    // Try to extract the frontend URL from the state if available
+    try {
+      const decoded = jwt.verify(state, config.JWT_SECRET);
+      if (decoded.redirectUri) {
+        // The redirectUri in state is the backend callback URL, not frontend
+        // We should use the config.FRONTEND_URL instead
+        console.log('🔍 Facebook state decoded, using config.FRONTEND_URL:', config.FRONTEND_URL);
+        redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
+      }
+    } catch (e) {
+      // If state is invalid, use fallback URL
+      console.log('Could not decode state, using fallback frontend URL');
     }
-  } catch (e) {
-    // If state is invalid, use fallback URL
-    console.log('Could not decode state, using fallback frontend URL');
-  }
   
   try {
     const { code, state, error, error_description } = req.query;
@@ -72,14 +81,14 @@ const handleCallback = asyncHandler(async (req, res) => {
     if (error) {
       console.log('Facebook OAuth error:', error, error_description);
       return res.redirect(
-        `${redirectToFrontend}?facebook=error&message=${encodeURIComponent(error_description || error)}`
+        `${redirectToFrontend}/creator/settings?facebook=error&message=${encodeURIComponent(error_description || error)}`
       );
     }
 
     // Validate required parameters
     if (!code || !state) {
       return res.redirect(
-        `${redirectToFrontend}?facebook=error&message=Missing+code+or+state`
+        `${redirectToFrontend}/creator/settings?facebook=error&message=Missing+code+or+state`
       );
     }
 
@@ -90,7 +99,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     } catch (e) {
       console.error('Invalid state token:', e.message);
       return res.redirect(
-        `${redirectToFrontend}?facebook=error&message=Invalid+or+expired+state`
+        `${redirectToFrontend}/creator/settings?facebook=error&message=Invalid+or+expired+state`
       );
     }
 
@@ -99,7 +108,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     
     if (!redirectUri) {
       return res.redirect(
-        `${redirectToFrontend}?facebook=error&message=Missing+redirect+URI`
+        `${redirectToFrontend}/creator/settings?facebook=error&message=Missing+redirect+URI`
       );
     }
 
@@ -129,9 +138,9 @@ const handleCallback = asyncHandler(async (req, res) => {
     const user = await User.findById(decoded.userId);
     if (!user) {
       console.error('User not found:', decoded.userId);
-      return res.redirect(
-        `${redirectToFrontend}?facebook=error&message=User+not+found`
-      );
+        return res.redirect(
+          `${redirectToFrontend}/creator/settings?facebook=error&message=User+not+found`
+        );
     }
 
     // Update user's Facebook account info
@@ -156,13 +165,13 @@ const handleCallback = asyncHandler(async (req, res) => {
 
     // Redirect to frontend with success
     return res.redirect(
-      `${redirectToFrontend}?facebook=success&message=Facebook+account+connected+successfully`
+      `${redirectToFrontend}/creator/settings?facebook=success&message=Facebook+account+connected+successfully`
     );
 
   } catch (error) {
     console.error('Facebook callback error:', error.response?.data || error.message);
     return res.redirect(
-      `${redirectToFrontend}?facebook=error&message=Failed+to+process+Facebook+callback`
+      `${redirectToFrontend}/creator/settings?facebook=error&message=Failed+to+process+Facebook+callback`
     );
   }
 });

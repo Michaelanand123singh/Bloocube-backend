@@ -11,6 +11,14 @@ class LinkedInController {
    */
   async generateAuthURL(req, res) {
     try {
+      // Check if LinkedIn credentials are configured
+      if (!config.LINKEDIN_CLIENT_ID || !config.LINKEDIN_CLIENT_SECRET) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'LinkedIn API credentials not configured. Please set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET in environment variables.' 
+        });
+      }
+
       const { redirectUri } = req.body;
       
       // Validate redirect URI
@@ -34,6 +42,11 @@ class LinkedInController {
 
       // Create state with user ID for verification
       // Include redirectUri in state to retrieve it later
+      console.log('🔑 Generating LinkedIn state token...');
+      console.log('User ID:', userId);
+      console.log('Redirect URI:', redirectUri);
+      console.log('JWT Secret exists:', !!config.JWT_SECRET);
+      
       const state = jwt.sign(
         { 
           userId: userId.toString(),
@@ -41,8 +54,15 @@ class LinkedInController {
           timestamp: Date.now()
         }, 
         config.JWT_SECRET, 
-        { expiresIn: '30m' }
+        { 
+          expiresIn: '30m',
+          issuer: 'bloocube-api',
+          audience: 'bloocube-client'
+        }
       );
+      
+      console.log('✅ State token generated successfully');
+      console.log('State token (first 50 chars):', state.substring(0, 50) + '...');
 
       // Generate LinkedIn authorization URL
       const authURL = linkedinService.generateAuthURL(redirectUri, state);
@@ -98,22 +118,9 @@ class LinkedInController {
    * @route GET /api/auth/linkedin/callback
    */
   async handleCallback(req, res) {
-    // Extract frontend URL from the redirectUri in the state
+    // Use consistent frontend URL from config
     const { code, state } = req.query;
-    let redirectToFrontend = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
-    
-    // Try to extract the frontend URL from the state if available
-    try {
-      const decoded = jwt.verify(state, config.JWT_SECRET);
-      if (decoded.redirectUri) {
-        // Extract the base URL from the callback URL
-        const frontendUrl = decoded.redirectUri.replace('/auth/linkedin/callback', '');
-        redirectToFrontend = `${frontendUrl}/creator/settings`;
-      }
-    } catch (e) {
-      // If state is invalid, use fallback URL
-      console.log('Could not decode state, using fallback frontend URL');
-    }
+    const redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
     
     try {
       const { code, state, error, error_description } = req.query;
@@ -136,16 +143,51 @@ class LinkedInController {
       // Verify and decode state
       let decoded;
       try {
-        decoded = jwt.verify(state, config.JWT_SECRET);
+        console.log('🔍 Verifying LinkedIn state token...');
+        console.log('State token (first 50 chars):', state.substring(0, 50) + '...');
+        console.log('JWT Secret exists:', !!config.JWT_SECRET);
+        
+        // Try to decode the state token (it might be URL encoded)
+        let stateToVerify = state;
+        try {
+          stateToVerify = decodeURIComponent(state);
+          console.log('✅ State token URL decoded successfully');
+        } catch (decodeError) {
+          console.log('ℹ️ State token is not URL encoded, using as-is');
+        }
+        
+        decoded = jwt.verify(stateToVerify, config.JWT_SECRET, {
+          issuer: 'bloocube-api',
+          audience: 'bloocube-client'
+        });
+        console.log('✅ State token verified successfully');
+        console.log('Decoded state:', {
+          userId: decoded.userId,
+          redirectUri: decoded.redirectUri,
+          timestamp: decoded.timestamp,
+          iat: decoded.iat,
+          exp: decoded.exp
+        });
+        
+        // Validate required fields in decoded state
+        if (!decoded.userId) {
+          throw new Error('Missing userId in state token');
+        }
+        if (!decoded.redirectUri) {
+          throw new Error('Missing redirectUri in state token');
+        }
       } catch (e) {
-        console.error('Invalid state token:', e.message);
+        console.error('❌ Invalid state token:', e.message);
+        console.error('State token:', state);
+        console.error('JWT Secret length:', config.JWT_SECRET ? config.JWT_SECRET.length : 'undefined');
+        console.error('Error details:', e);
         return res.redirect(
           `${redirectToFrontend}?linkedin=error&message=Invalid+or+expired+state`
         );
       }
 
       // Extract redirectUri from decoded state
-      const redirectUri = decoded.redirectUri || process.env.LINKEDIN_REDIRECT_URI;
+      const redirectUri = decoded.redirectUri || config.LINKEDIN_REDIRECT_URI;
       
       if (!redirectUri) {
         return res.redirect(
@@ -318,17 +360,17 @@ class LinkedInController {
    */
  // src/controllers/linkedinController.js
 
- async getProfile(req, res) {
-  try {
-    const userId = req.userId;
-    const user = await User.findById(userId).select('socialAccounts.linkedin');
+  async getProfile(req, res) {
+   try {
+     const userId = req.userId;
+     const user = await User.findById(userId).select('socialAccounts.linkedin');
 
-    if (!user || !user.socialAccounts?.linkedin?.accessToken) {
-      return res.status(400).json({
-        success: false,
-        
-      });
-    }
+     if (!user || !user.socialAccounts?.linkedin?.accessToken) {
+       return res.status(400).json({
+         success: false,
+         error: 'LinkedIn not connected'
+       });
+     }
 
     // ✅ Just return the saved profile data, like you do for Twitter
     return res.json({

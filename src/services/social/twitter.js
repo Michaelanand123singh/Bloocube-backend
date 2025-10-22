@@ -133,6 +133,45 @@ class TwitterService {
       };
     }
   }
+
+  // Get user profile using OAuth 2.0 access token
+  async getUserProfile(accessToken) {
+    try {
+      console.log('🔍 Fetching Twitter user profile...');
+      
+      const response = await axios.get(`${this.baseURL}/users/me`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        params: {
+          'user.fields': 'id,username,name,profile_image_url,public_metrics,verified'
+        }
+      });
+
+      const user = response.data.data;
+      
+      return {
+        success: true,
+        user: {
+          id: user.id,
+          username: user.username,
+          name: user.name,
+          profile_image_url: user.profile_image_url,
+          verified: user.verified,
+          public_metrics: user.public_metrics
+        }
+      };
+    } catch (error) {
+      console.error('❌ Twitter profile fetch error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.detail || error.response?.data?.error || 'Failed to fetch user profile',
+        statusCode: error.response?.status,
+      };
+    }
+  }
+
    // Refresh access token
    async refreshToken(refreshToken) {
     try {

@@ -8,6 +8,14 @@ class YouTubeController {
   // Generate YouTube OAuth URL
   async generateAuthURL(req, res) {
     try {
+      // Check if YouTube credentials are configured
+      if (!config.YOUTUBE_CLIENT_ID || !config.YOUTUBE_CLIENT_SECRET) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'YouTube API credentials not configured. Please set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in environment variables.' 
+        });
+      }
+
       console.log('🔑 YouTube generateAuthURL called:', {
         hasUser: !!req.user,
         userId: req.userId || req.user?._id,

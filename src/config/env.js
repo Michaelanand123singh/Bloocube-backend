@@ -27,13 +27,13 @@ const config = {
   EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@bloocube.com',
   
   // Social Media API Keys
-  INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID || '1267511308478797',
-  INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET || '9342a533439a90031466591c8ee0e781',
+  INSTAGRAM_CLIENT_ID: process.env.INSTAGRAM_CLIENT_ID,
+  INSTAGRAM_CLIENT_SECRET: process.env.INSTAGRAM_CLIENT_SECRET,
   // Use Facebook Login scopes for Instagram Business (Graph API)
   // If you need messaging/content publish add: instagram_manage_messages, instagram_content_publish, pages_manage_metadata
   INSTAGRAM_SCOPES: process.env.INSTAGRAM_SCOPES || 'pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_insights,instagram_manage_comments,instagram_content_publish',
-  FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID || '1267511308478797',
-  FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET || '9342a533439a90031466591c8ee0e781',
+  FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
+  FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET,
   TWITTER_CLIENT_ID: process.env.TWITTER_CLIENT_ID,
   TWITTER_CLIENT_SECRET: process.env.TWITTER_CLIENT_SECRET,
   TWITTER_BEARER_TOKEN: process.env.TWITTER_BEARER_TOKEN,

@@ -18,6 +18,14 @@ class InstagramController {
   // Generate Instagram OAuth URL
   async generateAuthURL(req, res) {
     try {
+      // Check if Instagram credentials are configured
+      if (!config.FACEBOOK_APP_ID || !config.FACEBOOK_APP_SECRET) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Instagram API credentials not configured. Please set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in environment variables.' 
+        });
+      }
+
       console.log('🔑 Instagram generateAuthURL called:', {
         hasUser: !!req.user,
         userId: req.userId || req.user?._id,
@@ -61,9 +69,10 @@ class InstagramController {
     try {
       const decoded = jwt.verify(state, config.JWT_SECRET);
       if (decoded.redirectUri) {
-        // Extract the base URL from the callback URL
-        const frontendUrl = decoded.redirectUri.replace('/auth/instagram/callback', '');
-        redirectToFrontend = `${frontendUrl}/creator/settings`;
+        // The redirectUri in state is the backend callback URL, not frontend
+        // We should use the config.FRONTEND_URL instead
+        console.log('🔍 Instagram state decoded, using config.FRONTEND_URL:', config.FRONTEND_URL);
+        redirectToFrontend = `${config.FRONTEND_URL || 'http://localhost:3000'}/creator/settings`;
       }
     } catch (e) {
       // If state is invalid, use fallback URL
@@ -77,14 +86,14 @@ class InstagramController {
       if (error) {
         console.log('Instagram OAuth error:', error, error_description);
         return res.redirect(
-          `${redirectToFrontend}?instagram=error&message=${encodeURIComponent(error_description || error)}`
+          `${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(error_description || error)}`
         );
       }
 
       // Validate required parameters
       if (!code || !state) {
         return res.redirect(
-          `${redirectToFrontend}?instagram=error&message=Missing+code+or+state`
+          `${redirectToFrontend}/creator/settings?instagram=error&message=Missing+code+or+state`
         );
       }
 
@@ -95,7 +104,7 @@ class InstagramController {
       } catch (e) {
         console.error('Invalid state token:', e.message);
         return res.redirect(
-          `${redirectToFrontend}?instagram=error&message=Invalid+or+expired+state`
+          `${redirectToFrontend}/creator/settings?instagram=error&message=Invalid+or+expired+state`
         );
       }
 
@@ -104,7 +113,7 @@ class InstagramController {
       
       if (!redirectUri) {
         return res.redirect(
-          `${redirectToFrontend}?instagram=error&message=Missing+redirect+URI`
+          `${redirectToFrontend}/creator/settings?instagram=error&message=Missing+redirect+URI`
         );
       }
 
@@ -115,7 +124,7 @@ class InstagramController {
 
       if (!tokenResult.success) {
         const detail = serializeErrorToUrl(tokenResult.error);
-        return res.redirect(`${redirectToFrontend}?instagram=error&message=${encodeURIComponent(detail)}`);
+        return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(detail)}`);
       }
 
       // Update the user record in the database with all necessary info
@@ -137,11 +146,11 @@ class InstagramController {
       );
 
       console.log("✅ Instagram user updated in DB");
-      return res.redirect(`${redirectToFrontend}?instagram=success&message=Instagram+account+connected+successfully`);
+      return res.redirect(`${redirectToFrontend}/creator/settings?instagram=success&message=Instagram+account+connected+successfully`);
     } catch (error) {
       console.error("🔥 Instagram callback error:", error);
       const msg = serializeErrorToUrl(error);
-      return res.redirect(`${redirectToFrontend}?instagram=error&message=${encodeURIComponent(msg)}`);
+      return res.redirect(`${redirectToFrontend}/creator/settings?instagram=error&message=${encodeURIComponent(msg)}`);
     }
   }
 
