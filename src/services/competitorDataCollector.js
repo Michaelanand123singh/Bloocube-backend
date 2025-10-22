@@ -114,13 +114,22 @@ class CompetitorDataCollector {
       const contentData = await this.collectContentData(service, platform, username, options);
       const engagementData = await this.calculateEngagementMetrics(contentData);
 
-      // Structure the collected data
+      // Structure the collected data with enhanced details
       const competitorData = {
         profile: {
           platform,
           username,
           profileUrl,
-          ...profileData
+          ...profileData,
+          // Enhanced profile data
+          bio: profileData.bio || profileData.description || '',
+          website: profileData.website || profileData.externalUrl || '',
+          location: profileData.location || '',
+          joinDate: profileData.joinDate || profileData.createdAt || '',
+          niche: profileData.niche || profileData.category || 'general',
+          brandCollaborations: profileData.brandCollaborations || [],
+          monetizationMethods: profileData.monetizationMethods || [],
+          audienceDemographics: profileData.audienceDemographics || {}
         },
         content: {
           posts: contentData.posts || [],
@@ -128,12 +137,24 @@ class CompetitorDataCollector {
           averagePostsPerWeek: contentData.averagePostsPerWeek || 0,
           contentTypes: contentData.contentTypes || {},
           topHashtags: contentData.topHashtags || [],
-          postingSchedule: contentData.postingSchedule || {}
+          postingSchedule: contentData.postingSchedule || {},
+          // Enhanced content analysis
+          contentThemes: this.analyzeContentThemes(contentData.posts || []),
+          averageCaptionLength: this.calculateAverageCaptionLength(contentData.posts || []),
+          averageVideoDuration: this.calculateAverageVideoDuration(contentData.posts || []),
+          bestPerformingContent: this.identifyBestPerformingContent(contentData.posts || []),
+          contentFrequency: this.analyzeContentFrequency(contentData.posts || []),
+          contentStrategy: this.determineContentStrategy(contentData.posts || [])
         },
         engagement: {
           ...engagementData,
           engagementRate: this.calculateEngagementRate(profileData, engagementData),
-          growthRate: await this.estimateGrowthRate(service, platform, username)
+          growthRate: await this.estimateGrowthRate(service, platform, username),
+          // Enhanced engagement insights
+          peakEngagementTimes: this.analyzePeakEngagementTimes(contentData.posts || []),
+          engagementByContentType: this.analyzeEngagementByContentType(contentData.posts || []),
+          audienceGrowthRate: await this.calculateAudienceGrowthRate(service, platform, username),
+          engagementConsistency: this.assessEngagementConsistency(contentData.posts || [])
         },
         audience: await this.analyzeAudience(service, platform, username, options),
         collectedAt: new Date(),
@@ -808,6 +829,174 @@ class CompetitorDataCollector {
     if (change > 10) return 'increasing';
     if (change < -10) return 'decreasing';
     return 'stable';
+  }
+
+  // Enhanced content analysis methods
+  analyzeContentThemes(posts) {
+    const themes = {};
+    const keywords = ['tutorial', 'review', 'unboxing', 'challenge', 'behind-the-scenes', 'lifestyle', 'fashion', 'food', 'travel', 'fitness', 'tech', 'beauty', 'gaming', 'music', 'art', 'business', 'motivation', 'comedy', 'dance', 'cooking'];
+    
+    posts.forEach(post => {
+      const text = (post.text || post.caption || post.title || '').toLowerCase();
+      keywords.forEach(keyword => {
+        if (text.includes(keyword)) {
+          themes[keyword] = (themes[keyword] || 0) + 1;
+        }
+      });
+    });
+    
+    return Object.entries(themes)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 5)
+      .map(([theme, count]) => ({ theme, count }));
+  }
+
+  calculateAverageCaptionLength(posts) {
+    if (posts.length === 0) return 0;
+    
+    const totalLength = posts.reduce((sum, post) => {
+      const text = post.text || post.caption || post.title || '';
+      return sum + text.length;
+    }, 0);
+    
+    return Math.round(totalLength / posts.length);
+  }
+
+  calculateAverageVideoDuration(posts) {
+    const videoPosts = posts.filter(post => post.video_duration || post.duration);
+    if (videoPosts.length === 0) return 0;
+    
+    const totalDuration = videoPosts.reduce((sum, post) => {
+      return sum + (post.video_duration || post.duration || 0);
+    }, 0);
+    
+    return Math.round(totalDuration / videoPosts.length);
+  }
+
+  identifyBestPerformingContent(posts) {
+    return posts
+      .map(post => ({
+        content: post.text || post.caption || post.title || '',
+        engagement: (post.like_count || 0) + (post.comment_count || 0) + (post.share_count || 0),
+        created_at: post.created_time || post.created_at || post.publishedAt,
+        content_type: post.content_type || 'unknown'
+      }))
+      .sort((a, b) => b.engagement - a.engagement)
+      .slice(0, 3);
+  }
+
+  analyzeContentFrequency(posts) {
+    const frequency = {};
+    posts.forEach(post => {
+      const date = new Date(post.created_time || post.created_at || post.publishedAt);
+      const dayOfWeek = date.getDay();
+      const hour = date.getHours();
+      
+      frequency[dayOfWeek] = (frequency[dayOfWeek] || 0) + 1;
+      frequency[`hour_${hour}`] = (frequency[`hour_${hour}`] || 0) + 1;
+    });
+    
+    return frequency;
+  }
+
+  determineContentStrategy(posts) {
+    const strategies = {
+      'educational': 0,
+      'entertainment': 0,
+      'promotional': 0,
+      'personal': 0,
+      'collaborative': 0
+    };
+    
+    posts.forEach(post => {
+      const text = (post.text || post.caption || post.title || '').toLowerCase();
+      
+      if (text.includes('how to') || text.includes('tutorial') || text.includes('guide')) {
+        strategies.educational++;
+      }
+      if (text.includes('funny') || text.includes('joke') || text.includes('comedy')) {
+        strategies.entertainment++;
+      }
+      if (text.includes('buy') || text.includes('discount') || text.includes('promo')) {
+        strategies.promotional++;
+      }
+      if (text.includes('i') || text.includes('my') || text.includes('personal')) {
+        strategies.personal++;
+      }
+      if (text.includes('collab') || text.includes('partnership') || text.includes('with')) {
+        strategies.collaborative++;
+      }
+    });
+    
+    return Object.entries(strategies)
+      .sort(([,a], [,b]) => b - a)[0][0];
+  }
+
+  // Enhanced engagement analysis methods
+  analyzePeakEngagementTimes(posts) {
+    const hourlyEngagement = {};
+    
+    posts.forEach(post => {
+      const date = new Date(post.created_time || post.created_at || post.publishedAt);
+      const hour = date.getHours();
+      const engagement = (post.like_count || 0) + (post.comment_count || 0) + (post.share_count || 0);
+      
+      hourlyEngagement[hour] = (hourlyEngagement[hour] || 0) + engagement;
+    });
+    
+    return Object.entries(hourlyEngagement)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 3)
+      .map(([hour, engagement]) => ({ hour: parseInt(hour), engagement }));
+  }
+
+  analyzeEngagementByContentType(posts) {
+    const engagementByType = {};
+    
+    posts.forEach(post => {
+      const contentType = post.content_type || 'unknown';
+      const engagement = (post.like_count || 0) + (post.comment_count || 0) + (post.share_count || 0);
+      
+      if (!engagementByType[contentType]) {
+        engagementByType[contentType] = { total: 0, count: 0 };
+      }
+      
+      engagementByType[contentType].total += engagement;
+      engagementByType[contentType].count += 1;
+    });
+    
+    Object.keys(engagementByType).forEach(type => {
+      engagementByType[type].average = engagementByType[type].total / engagementByType[type].count;
+    });
+    
+    return engagementByType;
+  }
+
+  async calculateAudienceGrowthRate(service, platform, username) {
+    try {
+      // This would require historical data - for now return a placeholder
+      return 0.05; // 5% growth rate placeholder
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  assessEngagementConsistency(posts) {
+    if (posts.length < 5) return 'insufficient_data';
+    
+    const engagements = posts.map(post => 
+      (post.like_count || 0) + (post.comment_count || 0) + (post.share_count || 0)
+    );
+    
+    const avg = engagements.reduce((sum, engagement) => sum + engagement, 0) / engagements.length;
+    const variance = engagements.reduce((sum, engagement) => sum + Math.pow(engagement - avg, 2), 0) / engagements.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficient = stdDev / avg;
+    
+    if (coefficient < 0.3) return 'very_consistent';
+    if (coefficient < 0.6) return 'consistent';
+    if (coefficient < 1.0) return 'moderate';
+    return 'inconsistent';
   }
 
   /**

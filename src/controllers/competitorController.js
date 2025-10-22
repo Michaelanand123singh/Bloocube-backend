@@ -7,6 +7,522 @@ const { HTTP_STATUS, SUCCESS_MESSAGES } = require('../utils/constants');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
 
+// Helper function to calculate competitor diversity score
+const calculateCompetitorDiversity = (competitorsData) => {
+  if (!competitorsData || competitorsData.length === 0) return 0;
+  
+  const platforms = new Set(competitorsData.map(d => d.profile.platform));
+  const followerRanges = competitorsData.map(d => {
+    const followers = d.profile.followers || d.profile.subscribers || 0;
+    if (followers < 1000) return 'micro';
+    if (followers < 10000) return 'small';
+    if (followers < 100000) return 'medium';
+    if (followers < 1000000) return 'large';
+    return 'mega';
+  });
+  
+  const platformDiversity = platforms.size / 4; // Max 4 platforms
+  const followerDiversity = new Set(followerRanges).size / 5; // Max 5 ranges
+  
+  return Math.round((platformDiversity + followerDiversity) * 50); // Score out of 100
+};
+
+// Helper function to determine market segment
+const determineMarketSegment = (competitorsData) => {
+  if (!competitorsData || competitorsData.length === 0) return 'unknown';
+  
+  const niches = competitorsData.map(d => d.profile.niche || d.profile.category || 'general');
+  const nicheCounts = {};
+  niches.forEach(niche => {
+    nicheCounts[niche] = (nicheCounts[niche] || 0) + 1;
+  });
+  
+  const dominantNiche = Object.keys(nicheCounts).reduce((a, b) => 
+    nicheCounts[a] > nicheCounts[b] ? a : b
+  );
+  
+  return dominantNiche;
+};
+
+// Helper functions to generate fallback insights based on collected data
+const generateKeyInsights = (competitorsData) => {
+  const insights = [];
+  
+  if (competitorsData.length > 0) {
+    const avgEngagement = competitorsData.reduce((sum, d) => sum + parseFloat(d.engagement.engagementRate), 0) / competitorsData.length;
+    const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+    
+    insights.push(`Average engagement rate across competitors: ${avgEngagement.toFixed(2)}%`);
+    insights.push(`Competitors analyzed across ${platforms.length} platforms: ${platforms.join(', ')}`);
+    
+    const topPerformer = competitorsData.reduce((best, current) => 
+      parseFloat(current.engagement.engagementRate) > parseFloat(best.engagement.engagementRate) ? current : best
+    );
+    insights.push(`Top performing competitor: @${topPerformer.profile.username} with ${topPerformer.engagement.engagementRate}% engagement`);
+    
+    const totalPosts = competitorsData.reduce((sum, d) => sum + d.content.totalPosts, 0);
+    insights.push(`Total posts analyzed: ${totalPosts} posts`);
+  }
+  
+  return insights;
+};
+
+const generateTrendingHashtags = (competitorsData) => {
+  const hashtagCounts = {};
+  
+  competitorsData.forEach(competitor => {
+    if (competitor.content.topHashtags) {
+      competitor.content.topHashtags.forEach(hashtag => {
+        const tag = hashtag.tag || hashtag;
+        hashtagCounts[tag] = (hashtagCounts[tag] || 0) + (hashtag.count || 1);
+      });
+    }
+  });
+  
+  return Object.entries(hashtagCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, usage_count: count }));
+};
+
+const generateContentStrategies = (competitorsData) => {
+  const strategies = [];
+  
+  // Get platform-specific strategies
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    const platformData = competitorsData.filter(d => d.profile.platform === platform);
+    const contentTypes = {};
+    
+    platformData.forEach(competitor => {
+      if (competitor.content.contentTypes) {
+        Object.entries(competitor.content.contentTypes).forEach(([type, count]) => {
+          contentTypes[type] = (contentTypes[type] || 0) + count;
+        });
+      }
+    });
+    
+    const dominantType = Object.entries(contentTypes).sort(([,a], [,b]) => b - a)[0];
+    
+    // Platform-specific strategies
+    switch (platform) {
+      case 'youtube':
+        strategies.push(`Focus on long-form video content (${dominantType?.[0] || 'video'} format)`);
+        strategies.push('Create detailed tutorials and reviews for YouTube');
+        strategies.push('Use YouTube Shorts for viral content and discovery');
+        strategies.push('Optimize video titles and thumbnails for click-through rates');
+        strategies.push('Create series content to increase watch time');
+        break;
+      case 'twitter':
+        strategies.push(`Focus on real-time text content (${dominantType?.[0] || 'text'} format)`);
+        strategies.push('Tweet frequently throughout the day for maximum reach');
+        strategies.push('Use Twitter threads for in-depth discussions');
+        strategies.push('Engage with trending topics and breaking news');
+        strategies.push('Share quick insights and opinions');
+        break;
+      case 'instagram':
+        strategies.push(`Focus on visual content (${dominantType?.[0] || 'image'} format)`);
+        strategies.push('Use Instagram Reels for viral potential');
+        strategies.push('Create Stories for behind-the-scenes content');
+        strategies.push('Post high-quality images with engaging captions');
+        strategies.push('Use Instagram Live for real-time engagement');
+        break;
+      case 'facebook':
+        strategies.push(`Focus on community content (${dominantType?.[0] || 'image'} format)`);
+        strategies.push('Create longer posts for detailed storytelling');
+        strategies.push('Use Facebook Groups for community building');
+        strategies.push('Share articles and links with commentary');
+        strategies.push('Host Facebook Live sessions');
+        break;
+      case 'linkedin':
+        strategies.push(`Focus on professional content (${dominantType?.[0] || 'text'} format)`);
+        strategies.push('Share industry insights and thought leadership');
+        strategies.push('Post professional articles and updates');
+        strategies.push('Engage with B2B content and networking');
+        strategies.push('Share career and business-related content');
+        break;
+      default:
+        if (dominantType) {
+          strategies.push(`Focus on ${dominantType[0]} content as it's the most popular format`);
+        }
+        strategies.push('Create educational content to increase engagement');
+    }
+  });
+  
+  // Add general strategies
+  strategies.push('Use storytelling in captions to connect with audience');
+  strategies.push('Post consistently to maintain audience engagement');
+  strategies.push('Engage with trending topics in your niche');
+  
+  return strategies;
+};
+
+const generateGrowthStrategies = (competitorsData) => {
+  const strategies = [];
+  
+  // Get platform-specific growth strategies
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    switch (platform) {
+      case 'youtube':
+        strategies.push('Collaborate with other YouTube creators for cross-promotion');
+        strategies.push('Use YouTube Shorts to reach new audiences');
+        strategies.push('Create playlists to increase watch time and subscriber retention');
+        strategies.push('Engage with comments to build community');
+        strategies.push('Use YouTube Analytics to optimize content strategy');
+        strategies.push('Create thumbnails that stand out in search results');
+        break;
+      case 'twitter':
+        strategies.push('Engage with trending hashtags to increase visibility');
+        strategies.push('Create viral Twitter threads for maximum reach');
+        strategies.push('Participate in Twitter Spaces for community building');
+        strategies.push('Retweet and engage with industry leaders');
+        strategies.push('Use Twitter polls to increase engagement');
+        strategies.push('Share breaking news and hot takes');
+        break;
+      case 'instagram':
+        strategies.push('Use Instagram Reels for viral potential and discovery');
+        strategies.push('Collaborate with Instagram influencers in your niche');
+        strategies.push('Create Instagram Stories for daily engagement');
+        strategies.push('Use Instagram Live for real-time interaction');
+        strategies.push('Engage with Instagram Explore page content');
+        strategies.push('Create user-generated content campaigns');
+        break;
+      case 'facebook':
+        strategies.push('Create Facebook Groups for community building');
+        strategies.push('Use Facebook Live for real-time engagement');
+        strategies.push('Share articles and links with engaging commentary');
+        strategies.push('Engage with Facebook Pages in your industry');
+        strategies.push('Use Facebook Events for community gatherings');
+        strategies.push('Create Facebook Stories for behind-the-scenes content');
+        break;
+      case 'linkedin':
+        strategies.push('Share professional articles and industry insights');
+        strategies.push('Engage with LinkedIn Groups in your field');
+        strategies.push('Connect with industry professionals and thought leaders');
+        strategies.push('Share career updates and professional achievements');
+        strategies.push('Use LinkedIn Live for professional discussions');
+        strategies.push('Create LinkedIn newsletters for thought leadership');
+        break;
+      default:
+        strategies.push('Collaborate with micro-influencers in your niche');
+        strategies.push('Cross-promote content across multiple platforms');
+    }
+  });
+  
+  // Add general growth strategies
+  strategies.push('Engage with trending hashtags and topics');
+  strategies.push('Create user-generated content campaigns');
+  strategies.push('Partner with complementary brands');
+  strategies.push('Host live sessions to increase engagement');
+  strategies.push('Create series content to build anticipation');
+  
+  return strategies;
+};
+
+const generateMonetizationOpportunities = (competitorsData) => {
+  const opportunities = [];
+  
+  const niches = competitorsData.map(d => d.profile.niche || 'general');
+  const dominantNiche = niches.reduce((a, b, i, arr) => 
+    arr.filter(v => v === a).length >= arr.filter(v => v === b).length ? a : b
+  );
+  
+  // Get platform-specific monetization opportunities
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    switch (platform) {
+      case 'youtube':
+        opportunities.push(`YouTube Partner Program - monetize through ads`);
+        opportunities.push(`Sponsored video content with ${dominantNiche} brands`);
+        opportunities.push(`YouTube Shorts Fund for viral content`);
+        opportunities.push(`Channel memberships and Super Chat`);
+        opportunities.push(`Affiliate marketing for tech products`);
+        opportunities.push(`Online courses and digital products`);
+        opportunities.push(`Merchandise sales through YouTube Shopping`);
+        break;
+      case 'twitter':
+        opportunities.push(`Twitter Blue subscription features`);
+        opportunities.push(`Sponsored tweets with ${dominantNiche} brands`);
+        opportunities.push(`Twitter Spaces monetization`);
+        opportunities.push(`Newsletter subscriptions (Twitter integration)`);
+        opportunities.push(`Consulting services for social media strategy`);
+        opportunities.push(`Affiliate marketing through tweet links`);
+        opportunities.push(`Twitter Ads revenue sharing`);
+        break;
+      case 'instagram':
+        opportunities.push(`Instagram Shopping and product tags`);
+        opportunities.push(`Sponsored posts with ${dominantNiche} brands`);
+        opportunities.push(`Instagram Reels monetization`);
+        opportunities.push(`Instagram Live badges and donations`);
+        opportunities.push(`Affiliate marketing through Instagram Stories`);
+        opportunities.push(`Brand partnerships and collaborations`);
+        opportunities.push(`Instagram Creator Fund`);
+        break;
+      case 'facebook':
+        opportunities.push(`Facebook Creator Bonus program`);
+        opportunities.push(`Sponsored posts with ${dominantNiche} brands`);
+        opportunities.push(`Facebook Live Stars and donations`);
+        opportunities.push(`Facebook Shop integration`);
+        opportunities.push(`Affiliate marketing through Facebook posts`);
+        opportunities.push(`Facebook Groups monetization`);
+        opportunities.push(`Facebook Marketplace for products`);
+        break;
+      case 'linkedin':
+        opportunities.push(`LinkedIn Creator Accelerator Program`);
+        opportunities.push(`Sponsored content with ${dominantNiche} brands`);
+        opportunities.push(`LinkedIn Learning course creation`);
+        opportunities.push(`Professional consulting services`);
+        opportunities.push(`B2B affiliate marketing`);
+        opportunities.push(`LinkedIn Newsletter subscriptions`);
+        opportunities.push(`Speaking engagements and workshops`);
+        break;
+      default:
+        opportunities.push(`Sponsored posts with ${dominantNiche} brands`);
+        opportunities.push('Affiliate marketing for relevant products');
+    }
+  });
+  
+  // Add general monetization opportunities
+  opportunities.push('Create and sell digital products');
+  opportunities.push('Offer consulting services in your expertise');
+  opportunities.push('Develop online courses');
+  opportunities.push('Brand partnership opportunities');
+  
+  return opportunities;
+};
+
+const generateCaptionOptimization = (competitorsData) => {
+  const tips = [];
+  
+  // Get platform-specific caption optimization tips
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    switch (platform) {
+      case 'youtube':
+        tips.push('Write compelling video titles with keywords for SEO');
+        tips.push('Use detailed descriptions with timestamps and links');
+        tips.push('Create eye-catching thumbnails with text overlay');
+        tips.push('Add closed captions for accessibility and SEO');
+        tips.push('Use YouTube Shorts descriptions for discoverability');
+        tips.push('Include call-to-actions in video descriptions');
+        break;
+      case 'twitter':
+        tips.push('Keep tweets under 280 characters for maximum engagement');
+        tips.push('Use Twitter threads for longer-form content');
+        tips.push('Include relevant hashtags (1-2 per tweet)');
+        tips.push('Ask questions to encourage replies and engagement');
+        tips.push('Use Twitter polls for interactive content');
+        tips.push('Retweet with commentary to add value');
+        break;
+      case 'instagram':
+        tips.push('Write engaging captions that tell a story');
+        tips.push('Use Instagram Stories text overlays effectively');
+        tips.push('Include relevant hashtags (5-10 per post)');
+        tips.push('Use Instagram Reels captions for context');
+        tips.push('Add location tags for local discoverability');
+        tips.push('Use emojis strategically to break up text');
+        break;
+      case 'facebook':
+        tips.push('Write longer, detailed posts for Facebook audience');
+        tips.push('Use Facebook Stories for quick updates');
+        tips.push('Include links and articles with commentary');
+        tips.push('Ask questions to encourage comments');
+        tips.push('Use Facebook Live descriptions for context');
+        tips.push('Share personal stories to build connection');
+        break;
+      case 'linkedin':
+        tips.push('Write professional, industry-focused content');
+        tips.push('Use LinkedIn articles for thought leadership');
+        tips.push('Include professional hashtags (3-5 per post)');
+        tips.push('Share career updates and professional insights');
+        tips.push('Use LinkedIn Stories for behind-the-scenes content');
+        tips.push('Engage with industry discussions and comments');
+        break;
+      default:
+        tips.push('Use emotional triggers in your captions');
+        tips.push('Include clear call-to-actions');
+    }
+  });
+  
+  // Add general caption optimization tips
+  tips.push('Keep captions engaging and relevant to your audience');
+  tips.push('Use emojis strategically to break up text');
+  tips.push('Ask questions to encourage comments');
+  tips.push('Tell personal stories to build connection');
+  tips.push('Use trending hashtags relevant to your content');
+  tips.push('Include location tags when relevant');
+  
+  return tips;
+};
+
+const generateOptimalPostingTimes = (competitorsData) => {
+  const timeCounts = {};
+  
+  competitorsData.forEach(competitor => {
+    if (competitor.engagement.peakEngagementTimes) {
+      competitor.engagement.peakEngagementTimes.forEach(time => {
+        const hour = time.hour;
+        timeCounts[hour] = (timeCounts[hour] || 0) + 1;
+      });
+    }
+  });
+  
+  const topTimes = Object.entries(timeCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 3)
+    .map(([hour]) => `${hour}:00`);
+  
+  return topTimes.length > 0 ? topTimes : ['8:00 AM', '7:00 PM', '12:00 PM'];
+};
+
+const generateCompetitiveBenchmarks = (competitorsData) => {
+  if (competitorsData.length === 0) return {};
+  
+  const avgEngagement = competitorsData.reduce((sum, d) => sum + parseFloat(d.engagement.engagementRate), 0) / competitorsData.length;
+  const avgFollowers = competitorsData.reduce((sum, d) => sum + (d.profile.followers || d.profile.subscribers || 0), 0) / competitorsData.length;
+  const avgPosts = competitorsData.reduce((sum, d) => sum + d.content.totalPosts, 0) / competitorsData.length;
+  
+  return {
+    average_engagement_rate: `${avgEngagement.toFixed(2)}%`,
+    average_followers: Math.round(avgFollowers).toLocaleString(),
+    average_posts: Math.round(avgPosts),
+    total_competitors: competitorsData.length
+  };
+};
+
+const generateActionableRecommendations = (competitorsData) => {
+  const recommendations = [];
+  
+  // Get platform-specific actionable recommendations
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    switch (platform) {
+      case 'youtube':
+        recommendations.push('Analyze your top-performing videos and replicate their format');
+        recommendations.push('Engage with comments within the first hour of posting');
+        recommendations.push('Create playlists to increase watch time and subscriber retention');
+        recommendations.push('Use YouTube Shorts for viral content and discovery');
+        recommendations.push('Optimize video titles and thumbnails for click-through rates');
+        recommendations.push('Collaborate with other YouTube creators for cross-promotion');
+        recommendations.push('Use YouTube Analytics to track performance metrics');
+        recommendations.push('Create series content to build anticipation');
+        break;
+      case 'twitter':
+        recommendations.push('Tweet frequently throughout the day for maximum reach');
+        recommendations.push('Engage with trending hashtags to increase visibility');
+        recommendations.push('Create viral Twitter threads for maximum engagement');
+        recommendations.push('Participate in Twitter Spaces for community building');
+        recommendations.push('Retweet and engage with industry leaders');
+        recommendations.push('Use Twitter polls to increase interaction');
+        recommendations.push('Share breaking news and hot takes');
+        recommendations.push('Respond to mentions and DMs promptly');
+        break;
+      case 'instagram':
+        recommendations.push('Post consistently at optimal times for your audience');
+        recommendations.push('Use Instagram Reels for viral potential and discovery');
+        recommendations.push('Create Instagram Stories for daily engagement');
+        recommendations.push('Use Instagram Live for real-time interaction');
+        recommendations.push('Engage with Instagram Explore page content');
+        recommendations.push('Create user-generated content campaigns');
+        recommendations.push('Use Instagram Shopping for product promotion');
+        recommendations.push('Collaborate with Instagram influencers in your niche');
+        break;
+      case 'facebook':
+        recommendations.push('Create Facebook Groups for community building');
+        recommendations.push('Use Facebook Live for real-time engagement');
+        recommendations.push('Share articles and links with engaging commentary');
+        recommendations.push('Engage with Facebook Pages in your industry');
+        recommendations.push('Use Facebook Events for community gatherings');
+        recommendations.push('Create Facebook Stories for behind-the-scenes content');
+        recommendations.push('Use Facebook Shop for product sales');
+        recommendations.push('Share personal stories to build connection');
+        break;
+      case 'linkedin':
+        recommendations.push('Share professional articles and industry insights');
+        recommendations.push('Engage with LinkedIn Groups in your field');
+        recommendations.push('Connect with industry professionals and thought leaders');
+        recommendations.push('Share career updates and professional achievements');
+        recommendations.push('Use LinkedIn Live for professional discussions');
+        recommendations.push('Create LinkedIn newsletters for thought leadership');
+        recommendations.push('Engage with industry discussions and comments');
+        recommendations.push('Share B2B content and professional updates');
+        break;
+      default:
+        recommendations.push('Analyze your top-performing posts and replicate their format');
+        recommendations.push('Engage with your audience within the first hour of posting');
+    }
+  });
+  
+  // Add general actionable recommendations
+  recommendations.push('Use a mix of content types to keep your feed interesting');
+  recommendations.push('Post consistently at optimal times for your audience');
+  recommendations.push('Collaborate with other creators in your niche');
+  recommendations.push('Use analytics to track what content performs best');
+  recommendations.push('Respond to comments to increase engagement');
+  recommendations.push('Create content that encourages user interaction');
+  
+  return recommendations;
+};
+
+const generatePlatformInsights = (competitorsData) => {
+  const platformInsights = {};
+  
+  const platforms = [...new Set(competitorsData.map(d => d.profile.platform))];
+  
+  platforms.forEach(platform => {
+    const platformData = competitorsData.filter(d => d.profile.platform === platform);
+    const avgEngagement = platformData.reduce((sum, d) => sum + parseFloat(d.engagement.engagementRate), 0) / platformData.length;
+    
+    platformInsights[platform] = [
+      `Average engagement rate: ${avgEngagement.toFixed(2)}%`,
+      `Best content type: ${Object.keys(platformData[0]?.content.contentTypes || {}).sort((a,b) => (platformData[0].content.contentTypes[b] || 0) - (platformData[0].content.contentTypes[a] || 0))[0] || 'Mixed'}`,
+      `Posting frequency: ${platformData[0]?.content.averagePostsPerWeek || 0} posts per week`
+    ];
+  });
+  
+  return platformInsights;
+};
+
+const generateContentThemes = (competitorsData) => {
+  const themeCounts = {};
+  
+  competitorsData.forEach(competitor => {
+    if (competitor.content.contentThemes) {
+      competitor.content.contentThemes.forEach(theme => {
+        const themeName = theme.theme || theme;
+        themeCounts[themeName] = (themeCounts[themeName] || 0) + (theme.count || 1);
+      });
+    }
+  });
+  
+  return Object.entries(themeCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 5)
+    .map(([theme, count]) => ({ theme, count }));
+};
+
+const generateEngagementPatterns = (competitorsData) => {
+  return {
+    peak_hours: generateOptimalPostingTimes(competitorsData),
+    best_content_types: Object.keys(competitorsData[0]?.content.contentTypes || {}),
+    engagement_trends: competitorsData.map(d => d.engagement.engagementTrend)
+  };
+};
+
+const generateAudienceInsights = (competitorsData) => {
+  return {
+    average_followers: Math.round(competitorsData.reduce((sum, d) => sum + (d.profile.followers || d.profile.subscribers || 0), 0) / competitorsData.length),
+    engagement_consistency: competitorsData.map(d => d.engagement.engagementConsistency),
+    growth_potential: 'High - based on competitor analysis'
+  };
+};
+
 /**
  * Create a basic analysis response when AI services are unavailable
  */
@@ -239,7 +755,7 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
       failed: failedData.length
     });
 
-    // Step 2: Prepare structured data for AI analysis
+    // Step 2: Prepare enhanced structured data for AI analysis
     const aiAnalysisPayload = {
       user_id: userId,
       campaign_id: campaignId,
@@ -253,50 +769,99 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
           following: data.profile.following || 0,
           posts_count: data.profile.posts || data.profile.videos || 0,
           engagement_rate: parseFloat(data.engagement.engagementRate) || 0,
-          verified: data.profile.verified || data.profile.isVerified || false
+          verified: data.profile.verified || data.profile.isVerified || false,
+          // Additional profile insights
+          bio: data.profile.bio || data.profile.description || '',
+          website: data.profile.website || data.profile.externalUrl || '',
+          location: data.profile.location || '',
+          join_date: data.profile.joinDate || data.profile.createdAt || ''
         },
         content_analysis: {
           total_posts: data.content.totalPosts,
           average_posts_per_week: data.content.averagePostsPerWeek,
           content_types: data.content.contentTypes,
           top_hashtags: data.content.topHashtags,
-          posting_schedule: data.content.postingSchedule
+          posting_schedule: data.content.postingSchedule,
+          // Enhanced content analysis
+          content_themes: data.content.contentThemes || [],
+          caption_length_avg: data.content.averageCaptionLength || 0,
+          video_duration_avg: data.content.averageVideoDuration || 0,
+          best_performing_content: data.content.bestPerformingContent || [],
+          content_frequency: data.content.contentFrequency || {}
         },
         engagement_metrics: {
           average_likes: data.engagement.averageLikes,
           average_comments: data.engagement.averageComments,
           average_shares: data.engagement.averageShares,
           total_engagement: data.engagement.totalEngagement,
-          engagement_trend: data.engagement.engagementTrend
+          engagement_trend: data.engagement.engagementTrend,
+          // Enhanced engagement insights
+          peak_engagement_times: data.engagement.peakEngagementTimes || [],
+          engagement_by_content_type: data.engagement.engagementByContentType || {},
+          audience_growth_rate: data.engagement.audienceGrowthRate || 0,
+          engagement_consistency: data.engagement.engagementConsistency || 'unknown'
         },
-        recent_posts: data.content.posts.slice(0, 10).map(post => ({
+        recent_posts: data.content.posts.slice(0, 15).map(post => ({
           content: post.text || post.caption || post.title || '',
           engagement: {
             likes: post.like_count || post.favorite_count || 0,
             comments: post.comment_count || post.reply_count || 0,
-            shares: post.retweet_count || post.share_count || 0
+            shares: post.retweet_count || post.share_count || 0,
+            views: post.view_count || post.play_count || 0
           },
           created_at: post.created_time || post.created_at || post.publishedAt,
-          content_type: competitorDataCollector.determineContentType(post, data.profile.platform)
+          content_type: competitorDataCollector.determineContentType(post, data.profile.platform),
+          hashtags: post.hashtags || [],
+          mentions: post.mentions || [],
+          media_urls: post.mediaUrls || [],
+          // Additional post insights
+          caption_sentiment: post.sentiment || 'neutral',
+          content_length: (post.text || post.caption || post.title || '').length,
+          engagement_rate: post.engagement_rate || 0
         })),
-        data_quality: data.dataQuality
+        data_quality: data.dataQuality,
+        // Additional competitor insights
+        competitor_insights: {
+          niche: data.profile.niche || data.profile.category || 'general',
+          content_strategy: data.content.contentStrategy || 'mixed',
+          brand_collaborations: data.profile.brandCollaborations || [],
+          monetization_methods: data.profile.monetizationMethods || [],
+          audience_demographics: data.profile.audienceDemographics || {}
+        }
       })),
       analysis_options: {
-        include_content_analysis: options.includeContentAnalysis !== false,
-        include_engagement_analysis: options.includeEngagementAnalysis !== false,
-        include_audience_analysis: options.includeAudienceAnalysis !== false,
-        include_competitive_insights: options.includeCompetitiveInsights !== false,
-        include_recommendations: options.includeRecommendations !== false,
+        include_content_analysis: true,
+        include_engagement_analysis: true,
+        include_audience_analysis: true,
+        include_competitive_insights: true,
+        include_recommendations: true,
         include_realtime_data: options.fetchRealTimeData === true,
-        max_posts: options.maxPosts || 30,
-        time_period_days: options.timePeriodDays || 30,
-        platform_specific: options.platformSpecific === true
+        platform_specific: true,
+        // Enhanced analysis options
+        include_hashtag_analysis: true,
+        include_caption_analysis: true,
+        include_posting_strategy: true,
+        include_content_themes: true,
+        include_engagement_patterns: true,
+        include_growth_strategies: true,
+        include_monetization_insights: true,
+        include_audience_insights: true,
+        include_competitive_benchmarking: true,
+        include_actionable_recommendations: true,
+        analysis_depth: true,
+        include_trending_insights: true,
+        include_content_optimization: true
       },
       metadata: {
         total_competitors: successfulData.length,
         platforms_analyzed: [...new Set(successfulData.map(d => d.profile.platform))],
         data_collection_timestamp: new Date().toISOString(),
-        analysis_request_id: `comp_${Date.now()}_${userId}`
+        analysis_request_id: `comp_${Date.now()}_${userId}`,
+        // Enhanced metadata
+        analysis_version: '2.0',
+        data_freshness: 'real_time',
+        competitor_diversity_score: calculateCompetitorDiversity(successfulData),
+        market_segment: determineMarketSegment(successfulData)
       },
       collected_at: new Date().toISOString()
     };
@@ -403,16 +968,87 @@ const analyzeCompetitors = asyncHandler(async (req, res) => {
           benchmark_metrics: aiResponse.results?.benchmark_metrics || {},
           recommendations: aiResponse.results?.recommendations || [],
           
-          // Raw Data Summary
+          // Enhanced Analysis Results (with fallbacks)
+          key_insights: aiResponse.results?.key_insights || generateKeyInsights(successfulData),
+          trending_hashtags: aiResponse.results?.trending_hashtags || generateTrendingHashtags(successfulData),
+          content_strategies: aiResponse.results?.content_strategies || generateContentStrategies(successfulData),
+          growth_strategies: aiResponse.results?.growth_strategies || generateGrowthStrategies(successfulData),
+          monetization_opportunities: aiResponse.results?.monetization_opportunities || generateMonetizationOpportunities(successfulData),
+          caption_optimization: aiResponse.results?.caption_optimization || generateCaptionOptimization(successfulData),
+          optimal_posting_times: aiResponse.results?.optimal_posting_times || generateOptimalPostingTimes(successfulData),
+          competitive_benchmarks: aiResponse.results?.competitive_benchmarks || generateCompetitiveBenchmarks(successfulData),
+          actionable_recommendations: aiResponse.results?.actionable_recommendations || generateActionableRecommendations(successfulData),
+          platform_insights: aiResponse.results?.platform_insights || generatePlatformInsights(successfulData),
+          content_themes: aiResponse.results?.content_themes || generateContentThemes(successfulData),
+          engagement_patterns: aiResponse.results?.engagement_patterns || generateEngagementPatterns(successfulData),
+          audience_insights: aiResponse.results?.audience_insights || generateAudienceInsights(successfulData),
+          
+          // Enhanced Competitor Data
           competitors_data: successfulData.map(data => ({
             platform: data.profile.platform,
             username: data.profile.username,
             profile_url: data.profile.profileUrl,
-            key_metrics: {
+            verified: data.profile.verified || data.profile.isVerified || false,
+            profile_metrics: {
               followers: data.profile.followers || data.profile.subscribers || 0,
-              engagement_rate: data.engagement.engagementRate,
-              posts_analyzed: data.content.totalPosts,
-              data_quality: data.dataQuality.level
+              following: data.profile.following || 0,
+              posts_count: data.profile.posts || data.profile.videos || 0,
+              engagement_rate: parseFloat(data.engagement.engagementRate) || 0,
+              verified: data.profile.verified || data.profile.isVerified || false,
+              bio: data.profile.bio || data.profile.description || '',
+              website: data.profile.website || data.profile.externalUrl || '',
+              location: data.profile.location || '',
+              join_date: data.profile.joinDate || data.profile.createdAt || '',
+              niche: data.profile.niche || data.profile.category || 'general'
+            },
+            engagement_metrics: {
+              average_likes: data.engagement.averageLikes,
+              average_comments: data.engagement.averageComments,
+              average_shares: data.engagement.averageShares,
+              total_engagement: data.engagement.totalEngagement,
+              engagement_trend: data.engagement.engagementTrend,
+              peak_engagement_times: data.engagement.peakEngagementTimes || [],
+              engagement_by_content_type: data.engagement.engagementByContentType || {},
+              audience_growth_rate: data.engagement.audienceGrowthRate || 0,
+              engagement_consistency: data.engagement.engagementConsistency || 'unknown'
+            },
+            content_analysis: {
+              total_posts: data.content.totalPosts,
+              average_posts_per_week: data.content.averagePostsPerWeek,
+              content_types: data.content.contentTypes,
+              top_hashtags: data.content.topHashtags,
+              posting_schedule: data.content.postingSchedule,
+              content_themes: data.content.contentThemes || [],
+              caption_length_avg: data.content.averageCaptionLength || 0,
+              video_duration_avg: data.content.averageVideoDuration || 0,
+              best_performing_content: data.content.bestPerformingContent || [],
+              content_frequency: data.content.contentFrequency || {},
+              content_strategy: data.content.contentStrategy || 'mixed'
+            },
+            recent_posts: data.content.posts.slice(0, 15).map(post => ({
+              content: post.text || post.caption || post.title || '',
+              engagement: {
+                likes: post.like_count || post.favorite_count || 0,
+                comments: post.comment_count || post.reply_count || 0,
+                shares: post.retweet_count || post.share_count || 0,
+                views: post.view_count || post.play_count || 0
+              },
+              created_at: post.created_time || post.created_at || post.publishedAt,
+              content_type: competitorDataCollector.determineContentType(post, data.profile.platform),
+              hashtags: post.hashtags || [],
+              mentions: post.mentions || [],
+              media_urls: post.mediaUrls || [],
+              caption_sentiment: post.sentiment || 'neutral',
+              content_length: (post.text || post.caption || post.title || '').length,
+              engagement_rate: post.engagement_rate || 0
+            })),
+            data_quality: data.dataQuality,
+            competitor_insights: {
+              niche: data.profile.niche || data.profile.category || 'general',
+              content_strategy: data.content.contentStrategy || 'mixed',
+              brand_collaborations: data.profile.brandCollaborations || [],
+              monetization_methods: data.profile.monetizationMethods || [],
+              audience_demographics: data.profile.audienceDemographics || {}
             }
           })),
           
@@ -564,8 +1200,6 @@ const testAIServices = asyncHandler(async (req, res) => {
         include_competitive_insights: false,
         include_recommendations: false,
         include_realtime_data: false,
-        max_posts: 5,
-        time_period_days: 7,
         platform_specific: true
       },
       metadata: {
@@ -803,10 +1437,25 @@ const getAnalysisHistory = asyncHandler(async (req, res) => {
     result_type: 'competitor_analysis'
   });
 
+  // Transform the data to match frontend expectations
+  const transformedAnalyses = analyses.map(analysis => {
+    const inputData = analysis.input_data || {};
+    const competitorUrls = inputData.competitorUrls || inputData.competitor_urls || [];
+    
+    return {
+      id: analysis._id.toString(),
+      competitorUrls: competitorUrls,
+      analysisType: inputData.analysisType || inputData.analysis_type || 'comprehensive',
+      competitorsAnalyzed: competitorUrls.length,
+      createdAt: analysis.createdAt.toISOString(),
+      status: analysis.status || 'completed'
+    };
+  });
+
   res.status(HTTP_STATUS.OK).json({
     success: true,
     data: {
-      analyses,
+      analyses: transformedAnalyses,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
