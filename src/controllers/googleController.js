@@ -61,20 +61,18 @@ class GoogleController {
       const jwtManager = require('../utils/jwt');
       const tokenPair = jwtManager.generateTokenPair({ id: user._id, email: user.email, role: user.role });
 
-      // Set tokens as HTTP-only cookies, and also return access token to frontend for localStorage-based auth
-      const isProd = process.env.NODE_ENV === 'production';
-      res.cookie('accessToken', tokenPair.accessToken, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-        maxAge: 1000 * 60 * 60, // 1 hour
+      // Use the standardized cookie utility to set authentication cookies
+      const { setAuthCookies } = require('../utils/cookies');
+      setAuthCookies(res, tokenPair.accessToken, tokenPair.refreshToken, user);
+      // Log cookie setting for debugging
+      console.log('🍪 Setting cookies for Google login:', {
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        redirectBase: redirectBase,
+        usingStandardizedCookies: true
       });
-      res.cookie('refreshToken', tokenPair.refreshToken, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-        maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-      });
+      
       // Redirect back to frontend callback with token for auto-login (mirrors LinkedIn flow)
       return res.redirect(`${redirectBase}/auth/google/callback?google=success&token=${encodeURIComponent(tokenPair.accessToken)}&message=${encodeURIComponent('Google+login+successful')}`);
     } catch (error) {
