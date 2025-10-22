@@ -738,8 +738,8 @@ async postToTwitter(post, user) {
       const query = {};
       // Scope by author for non-admins
       if (req.user?.role !== 'admin') {
-        query.author = req.user._id;
-      }
+        query.author = req.userId;
+            }
 
       if (status) query.status = status;
       if (platform) query.platform = platform;
@@ -790,7 +790,7 @@ async postToTwitter(post, user) {
 
       const baseQuery = { _id: id };
       if (req.user?.role !== 'admin') {
-        baseQuery.author = req.user._id;
+       baseQuery.author = req.userId;
       }
       const post = await Post.findOne(baseQuery).populate('author', 'name email role');
 
@@ -839,7 +839,7 @@ async postToTwitter(post, user) {
 
 
       const post = await Post.findOneAndUpdate(
-        { _id: id, author: req.user._id },
+        { _id: id, author: req.userId },
         { $set: updateData },
         { new: true }
       ).populate('author', 'username email');
@@ -873,7 +873,7 @@ async postToTwitter(post, user) {
 
       const post = await Post.findOneAndDelete({
         _id: id,
-        author: req.user._id
+        author: req.userId
       });
 
       if (!post) {
@@ -1068,7 +1068,16 @@ async postToTwitter(post, user) {
 
       // Post to platform
       console.log('🚀 Attempting to post to platform:', post.platform);
-      const platformResult = await this.postToPlatform(post, req.user);
+     // Get user with social accounts
+     const user = await User.findById(req.userId);
+     if (!user) {
+       return res.status(404).json({
+         success: false,
+         message: 'User not found'
+       });
+     }
+
+      const platformResult = await this.postToPlatform(post, user);
 
       if (!platformResult.success) {
         // Update post status to failed
