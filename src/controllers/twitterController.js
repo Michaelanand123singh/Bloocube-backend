@@ -43,7 +43,7 @@ async generateAuthURL(req, res) {
     });
 
     // ✅ FIX: Save BOTH the token and the secret to identify the user on callback
-    await User.findByIdAndUpdate(req.user._id, {
+    await User.findByIdAndUpdate(req.userId, {
       'socialAccounts.twitter.oauth_token': oauth_token,
       'socialAccounts.twitter.oauth_token_secret': oauth_token_secret
     });
@@ -192,7 +192,7 @@ async handleCallback(req, res) {
   // Disconnect Twitter account
   async disconnect(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.userId;
 
       const user = await User.findByIdAndUpdate(
         userId,
@@ -364,7 +364,7 @@ async postContent(req, res) {
   // Upload Media
   async uploadMedia(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.userId;
       const user = await User.findById(userId);
 
       if (!user || !user.socialAccounts?.twitter?.accessToken) {
@@ -392,7 +392,7 @@ async postContent(req, res) {
   async checkMediaStatus(req, res) {
     try {
       const { mediaId } = req.params;
-      const userId = req.user.id;
+      const userId = req.userId;
       const user = await User.findById(userId);
 
       if (!user || !user.socialAccounts?.twitter?.accessToken) {
@@ -415,7 +415,7 @@ async postContent(req, res) {
   // Get Twitter profile
   async getProfile(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.userId;
       const user = await User.findById(userId);
 
       if (!user || !user.socialAccounts?.twitter) {
@@ -434,7 +434,7 @@ async postContent(req, res) {
   // Validate Twitter connection
   async validateConnection(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.userId;
       const user = await User.findById(userId);
 
       if (!user || !user.socialAccounts?.twitter?.accessToken) {
