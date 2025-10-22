@@ -44,12 +44,17 @@ const upload = multer({
 
 async function persistUploads(req, res, next) {
   try {
-    if (!req.files || req.files.length === 0) {
+    if (!req.files || Object.keys(req.files).length === 0) {
       return next();
     }
 
-    // This will create a new array of file objects in the exact format the schema needs
-    const fileProcessingPromises = req.files.map(async (file) => {
+    // When using multer.fields(), req.files is an object with field names as keys
+    // Convert to arrays for easier processing
+    const mediaFiles = req.files.media || [];
+    const thumbnailFiles = req.files.thumbnail || [];
+
+    // Process media files
+    const mediaProcessingPromises = mediaFiles.map(async (file) => {
       const originalExt = path.extname(file.originalname).toLowerCase();
       const hashedName = crypto.randomBytes(16).toString('hex') + originalExt;
       
@@ -89,8 +94,56 @@ async function persistUploads(req, res, next) {
       return finalFileObject;
     });
 
-    // Replace req.files with our new, perfectly formatted file objects
-    req.files = await Promise.all(fileProcessingPromises);
+    // Process thumbnail files
+    const thumbnailProcessingPromises = thumbnailFiles.map(async (file) => {
+      const originalExt = path.extname(file.originalname).toLowerCase();
+      const hashedName = crypto.randomBytes(16).toString('hex') + originalExt;
+      
+      let finalFileObject;
+
+      if (isGcsEnabled()) {
+        const today = new Date();
+        const datePrefix = `${today.getFullYear()}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+        const gcsKey = `thumbnails/${datePrefix}/${hashedName}`;
+        const { key, url } = await uploadBufferToGcs(file.buffer, gcsKey, file.mimetype);
+        
+        finalFileObject = {
+          type: 'image',
+          url: url,
+          storage: 'gcs',
+          storageKey: key,
+          filename: hashedName,
+          size: file.size,
+          mimeType: file.mimetype,
+        };
+
+      } else {
+        // Local storage fallback
+        const destPath = path.join(uploadDir, hashedName);
+        fs.writeFileSync(destPath, file.buffer);
+        
+        finalFileObject = {
+          type: 'image',
+          url: `/uploads/${hashedName}`,
+          storage: 'local',
+          storageKey: null,
+          filename: hashedName,
+          size: file.size,
+          mimeType: file.mimetype,
+        };
+      }
+      return finalFileObject;
+    });
+
+    // Process all files
+    const [processedMediaFiles, processedThumbnailFiles] = await Promise.all([
+      Promise.all(mediaProcessingPromises),
+      Promise.all(thumbnailProcessingPromises)
+    ]);
+
+    // Set processed files on request
+    req.files = processedMediaFiles;
+    req.thumbnail = processedThumbnailFiles[0] || null; // Only one thumbnail per post
 
     return next();
   } catch (err) {

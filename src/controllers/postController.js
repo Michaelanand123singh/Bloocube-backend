@@ -221,13 +221,28 @@ async postToTwitter(post, user) {
       const description = youtubeContent.description || post.content?.caption || '';
       const tags = youtubeContent.tags || [];
       const desiredPrivacyStatus = youtubeContent.privacy_status || 'private'; // Get the desired status
+      const isShort = youtubeContent.is_short || false;
+
+      // Handle thumbnail if provided
+      let thumbnailBuffer = null;
+      if (post.thumbnail) {
+        try {
+          const thumbnailPath = path.join(__dirname, '..', '..', 'uploads', post.thumbnail.filename);
+          thumbnailBuffer = fs.readFileSync(thumbnailPath);
+          console.log('🖼️ Thumbnail file found:', post.thumbnail.filename);
+        } catch (thumbnailError) {
+          console.warn('⚠️ Could not read thumbnail file:', thumbnailError.message);
+        }
+      }
 
       console.log('🎬 Uploading video to YouTube:', {
         title,
         description: description.substring(0, 100) + '...',
         tagsCount: tags.length,
         videoSize: videoBuffer.length,
-        desiredPrivacyStatus // This log will now show 'public'
+        desiredPrivacyStatus, // This log will now show 'public'
+        isShort,
+        hasThumbnail: !!thumbnailBuffer
       });
 
       // Upload video to YouTube
@@ -237,7 +252,9 @@ async postToTwitter(post, user) {
         title,
         description,
         tags,
-        desiredPrivacyStatus // ✅ FIX: Pass the desiredPrivacyStatus directly
+        desiredPrivacyStatus, // ✅ FIX: Pass the desiredPrivacyStatus directly
+        null, // onProgress callback
+        thumbnailBuffer // thumbnail buffer
       );
 
       if (uploadResult.success) {
@@ -698,7 +715,8 @@ async postToTwitter(post, user) {
         platformContent: parsedPlatformContent,
         tags: parsedTags,
         categories: parsedCategories,
-        media: req.files || [] // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
+        media: req.files || [], // ✅ DIRECTLY use req.files (now correctly formatted by middleware)
+        thumbnail: req.thumbnail || null // Add thumbnail if provided
       });
 
       await post.save();

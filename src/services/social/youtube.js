@@ -223,14 +223,15 @@ class YouTubeService {
   // Upload video to YouTube
  // In src/services/social/youtube.js
 
- async uploadVideo(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', onProgress = null) {
+ async uploadVideo(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', onProgress = null, thumbnailBuffer = null) {
   try {
     console.log('🎬 Starting YouTube video upload...', {
       title,
       descriptionLength: description?.length,
       tagsCount: tags?.length,
       videoSize: videoBuffer?.length,
-      privacyStatus // ✅ This should now log the value passed from the controller (e.g., 'public')
+      privacyStatus, // ✅ This should now log the value passed from the controller (e.g., 'public')
+      hasThumbnail: !!thumbnailBuffer
     });
 
     const metadata = {
@@ -284,9 +285,23 @@ class YouTubeService {
     // If the final status is 200 or 201, the upload is complete
     if (uploadResponse.status === 200 || uploadResponse.status === 201) {
       console.log('✅ Video uploaded successfully:', uploadResponse.data);
+      const videoId = uploadResponse.data.id;
+      
+      // Upload thumbnail if provided
+      if (thumbnailBuffer) {
+        try {
+          console.log('🖼️ Uploading custom thumbnail...');
+          await this.uploadThumbnail(accessToken, videoId, thumbnailBuffer);
+          console.log('✅ Thumbnail uploaded successfully');
+        } catch (thumbnailError) {
+          console.warn('⚠️ Thumbnail upload failed:', thumbnailError.message);
+          // Don't fail the entire upload if thumbnail fails
+        }
+      }
+      
       return {
         success: true,
-        video_id: uploadResponse.data.id,
+        video_id: videoId,
         title: uploadResponse.data.snippet.title,
         description: uploadResponse.data.snippet.description,
         publishedAt: uploadResponse.data.snippet.publishedAt,
@@ -309,7 +324,7 @@ class YouTubeService {
 }
 
 // Simple upload for small files (< 10MB)
-async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private') { // Ensure privacyStatus is accepted
+async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', thumbnailBuffer = null) { // Ensure privacyStatus is accepted
   try {
     const formData = new FormData();
 
@@ -345,9 +360,23 @@ async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [],
       }
     );
 
+    const videoId = response.data.id;
+    
+    // Upload thumbnail if provided
+    if (thumbnailBuffer) {
+      try {
+        console.log('🖼️ Uploading custom thumbnail...');
+        await this.uploadThumbnail(accessToken, videoId, thumbnailBuffer);
+        console.log('✅ Thumbnail uploaded successfully');
+      } catch (thumbnailError) {
+        console.warn('⚠️ Thumbnail upload failed:', thumbnailError.message);
+        // Don't fail the entire upload if thumbnail fails
+      }
+    }
+
     return {
       success: true,
-      video_id: response.data.id,
+      video_id: videoId,
       title: response.data.snippet.title,
       description: response.data.snippet.description,
       publishedAt: response.data.snippet.publishedAt
@@ -361,9 +390,43 @@ async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [],
       statusCode: error.response?.status,
     };
   }
-}
+  }
 
+  // Upload custom thumbnail for a video
+  async uploadThumbnail(accessToken, videoId, thumbnailBuffer) {
+    try {
+      console.log('🖼️ Uploading thumbnail for video:', videoId);
+      
+      const response = await axios.post(
+        `${this.baseURL}/thumbnails/set`,
+        thumbnailBuffer,
+        {
+          params: {
+            videoId: videoId
+          },
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'image/jpeg', // YouTube expects JPEG format
+            'Content-Length': thumbnailBuffer.length
+          },
+          maxContentLength: 2 * 1024 * 1024, // 2MB max for thumbnails
+        }
+      );
 
+      console.log('✅ Thumbnail uploaded successfully:', response.data);
+      return {
+        success: true,
+        thumbnailUrl: response.data.items?.[0]?.default?.url
+      };
+    } catch (error) {
+      console.error('❌ Thumbnail upload error:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+      });
+      throw new Error(error.response?.data?.error?.message || 'Failed to upload thumbnail');
+    }
+  }
 
   // Get video analytics
   async getVideoAnalytics(accessToken, videoId) {

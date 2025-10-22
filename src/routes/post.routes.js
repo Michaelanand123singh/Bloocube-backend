@@ -45,7 +45,10 @@ const idValidation = [
 
 // Middleware to handle file uploads + persist to storage (GCS/local)
 const uploadMiddleware = [
-  upload.array('media', 10), // This is the multer function
+  upload.fields([
+    { name: 'media', maxCount: 10 },
+    { name: 'thumbnail', maxCount: 1 }
+  ]), // This is the multer function
   persistUploads             // This is your custom persistence function
 ];
 

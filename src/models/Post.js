@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 // Helper object for custom validation
 const validPostTypes = {
   twitter: ['tweet', 'thread', 'poll'],
-  youtube: ['video', 'live', 'post'],
+  youtube: ['video', 'short', 'live', 'post'],
   instagram: ['post', 'story', 'reel', 'carousel'],
   linkedin: ['post', 'video', 'poll'],
   facebook: ['post', 'story', 'reel', 'video', 'live', 'carousel']
@@ -96,6 +96,23 @@ const PostSchema = new mongoose.Schema({
     },
     thumbnail: String
   }],
+  thumbnail: {
+    type: {
+      type: String,
+      enum: ['image'],
+      default: 'image'
+    },
+    url: String,
+    storage: {
+      type: String,
+      enum: ['local', 'gcs'],
+      default: 'local'
+    },
+    storageKey: String,
+    filename: String,
+    size: Number,
+    mimeType: String
+  },
   analytics: {
     views: { type: Number, default: 0 },
     likes: { type: Number, default: 0 },
