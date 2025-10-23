@@ -25,7 +25,7 @@ class YouTubeController {
       });
 
       const { redirectUri } = req.body;
-      const state = jwt.sign({ userId: req.userId || req.user._id }, config.JWT_SECRET, { expiresIn: '30m' });
+      const state = jwt.sign({ userId: req.userId || req.user?._id || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` }, config.JWT_SECRET, { expiresIn: '30m' });
     
       const authURL = youtubeService.generateAuthURL(redirectUri, state);
     

@@ -1,10 +1,11 @@
 // src/routes/linkedin.routes.js
 const router = require('express').Router();
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 const controller = require('../controllers/linkedinController');
 
-router.post('/auth-url', authenticate, controller.generateAuthURL);
-router.get('/auth-url', authenticate, controller.generateAuthURL);
+// Auth URL generation should NOT require authentication - it's used to initiate login
+router.post('/auth-url', optionalAuth, controller.generateAuthURL);
+router.get('/auth-url', optionalAuth, controller.generateAuthURL);
 router.get('/callback', controller.handleCallback);
 router.post('/save-connection', authenticate, controller.saveConnection);
 

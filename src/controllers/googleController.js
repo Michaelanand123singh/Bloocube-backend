@@ -7,7 +7,8 @@ const { getFrontendUrl, getLoginUrl, buildRedirectUrl } = require('../utils/urlU
 class GoogleController {
   async generateAuthURL(req, res) {
     const redirectUri = (req.body && req.body.redirectUri) || req.query.redirectUri;
-    const userId = (req.userId || req.user?._id) || 'guest';
+    // Use optional user ID if available, otherwise generate a guest identifier
+    const userId = (req.userId || req.user?._id) || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const state = jwt.sign({ userId }, config.JWT_SECRET, { expiresIn: '30m' });
     const authURL = googleService.generateAuthURL(redirectUri, state);
     res.json({ success: true, authURL, state, redirectUri });

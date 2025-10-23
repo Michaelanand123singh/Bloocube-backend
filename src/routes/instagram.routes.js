@@ -2,12 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const instagramController = require('../controllers/instagramController');
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 const { upload, persistUploads } = require('../middlewares/upload');
 
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
-router.post('/auth-url', authenticate, instagramController.generateAuthURL);
+router.post('/auth-url', optionalAuth, instagramController.generateAuthURL);
 router.get('/callback', instagramController.handleCallback);
 
 // Test route

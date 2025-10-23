@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const facebookController = require('../controllers/facebookController');
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 
 // Facebook OAuth routes
-router.post('/auth-url', authenticate, facebookController.generateAuthURL);
+router.post('/auth-url', optionalAuth, facebookController.generateAuthURL);
 router.get('/callback', facebookController.handleCallback);
 
 // Facebook profile and connection management

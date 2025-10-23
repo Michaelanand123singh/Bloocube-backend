@@ -12,7 +12,7 @@ const FACEBOOK_REDIRECT_URI = `${config.BASE_URL}/api/facebook/callback`;
 
 // Generate Facebook OAuth URL
 const generateAuthURL = asyncHandler(async (req, res) => {
-  const userId = req.userId;
+  const userId = req.userId || req.user?._id || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const { redirectUri } = req.body;
 
   try {

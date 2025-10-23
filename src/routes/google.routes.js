@@ -1,9 +1,10 @@
 const router = require('express').Router();
 const controller = require('../controllers/googleController');
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 
-router.post('/auth-url', authenticate, controller.generateAuthURL);
-router.get('/auth-url', authenticate, controller.generateAuthURL);
+// Auth URL generation should NOT require authentication - it's used to initiate login
+router.post('/auth-url', optionalAuth, controller.generateAuthURL);
+router.get('/auth-url', optionalAuth, controller.generateAuthURL);
 router.get('/callback', controller.handleCallback);
 
 module.exports = router;

@@ -2,13 +2,13 @@
 const express = require('express');
 const router = express.Router();
 const twitterController = require('../controllers/twitterController');
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 const { upload, persistUploads } = require('../middlewares/upload');
 
 // ===== PUBLIC ROUTES =====
 // OAuth flow routes (no authentication required)
-router.get('/auth-url', authenticate, twitterController.generateAuthURL);
-router.post('/auth-url', authenticate, twitterController.generateAuthURL); // Support both GET and POST
+router.get('/auth-url', optionalAuth, twitterController.generateAuthURL);
+router.post('/auth-url', optionalAuth, twitterController.generateAuthURL); // Support both GET and POST
 router.get('/callback', twitterController.handleCallback);
 
 // Test route

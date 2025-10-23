@@ -42,7 +42,7 @@ class InstagramController {
       
       const state = jwt.sign(
         { 
-          userId: req.userId || req.user._id,
+          userId: req.userId || req.user?._id || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           redirectUri: finalRedirectUri,
           timestamp: Date.now()
         },

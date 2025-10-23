@@ -2,12 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const youtubeController = require('../controllers/youtubeController');
-const { authenticate } = require('../middlewares/auth');
+const { authenticate, optionalAuth } = require('../middlewares/auth');
 const { upload, persistUploads } = require('../middlewares/upload');
 
 // Public routes (require app auth to associate user)
-router.post('/auth-url', authenticate, youtubeController.generateAuthURL);
-router.get('/auth-url', authenticate, youtubeController.generateAuthURL);
+router.post('/auth-url', optionalAuth, youtubeController.generateAuthURL);
+router.get('/auth-url', optionalAuth, youtubeController.generateAuthURL);
 router.get('/callback', youtubeController.handleCallback);
 
 // Protected routes for YouTube data/actions

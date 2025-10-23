@@ -42,11 +42,14 @@ async generateAuthURL(req, res) {
       oauth_token_secret: oauth_token_secret.substring(0, 10) + '...'
     });
 
-    // ✅ FIX: Save BOTH the token and the secret to identify the user on callback
-    await User.findByIdAndUpdate(req.userId, {
-      'socialAccounts.twitter.oauth_token': oauth_token,
-      'socialAccounts.twitter.oauth_token_secret': oauth_token_secret
-    });
+    // ✅ FIX: Save BOTH the token and the secret to identify the user on callback (if user is authenticated)
+    const userId = req.userId || req.user?._id;
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        'socialAccounts.twitter.oauth_token': oauth_token,
+        'socialAccounts.twitter.oauth_token_secret': oauth_token_secret
+      });
+    }
 
     console.log('✅ Twitter OAuth 1.0a URL generated successfully');
     res.json({ success: true, authURL: url });
