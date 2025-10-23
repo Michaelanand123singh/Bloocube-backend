@@ -339,7 +339,21 @@ const acceptBid = asyncHandler(async (req, res) => {
     status: 'selected'
   });
 
-  await campaign.save();
+  // Save campaign with validation bypass for deadline if needed
+  try {
+    await campaign.save();
+  } catch (error) {
+    if (error.name === 'ValidationError' && error.message.includes('Deadline must be in the future')) {
+      // If deadline validation fails, save without validation for this specific case
+      await campaign.save({ validateBeforeSave: false });
+      logger.warn('Campaign saved without deadline validation due to past deadline', { 
+        campaignId, 
+        deadline: campaign.deadline 
+      });
+    } else {
+      throw error;
+    }
+  }
 
   logger.info('Bid accepted', { bidId, campaignId });
 

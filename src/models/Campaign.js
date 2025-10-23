@@ -38,9 +38,15 @@ const campaignSchema = new mongoose.Schema({
     required: [true, 'Deadline is required'],
     validate: {
       validator: function(deadline) {
+        // Allow past deadlines for campaigns that are already selected or completed
+        if (this.status === 'completed' || this.status === 'closed' || 
+            (this.selectedCreators && this.selectedCreators.length > 0)) {
+          return true;
+        }
+        // For new campaigns or active campaigns, deadline must be in the future
         return deadline > new Date();
       },
-      message: 'Deadline must be in the future'
+      message: 'Deadline must be in the future for new campaigns'
     }
   },
   status: {
