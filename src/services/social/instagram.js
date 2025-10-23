@@ -145,24 +145,61 @@ class InstagramService {
   // UPDATED: All API methods now correctly accept igAccountId
   async postContent(accessToken, igAccountId, contentData) {
     try {
+      console.log('📸 Instagram posting details:', {
+        igAccountId,
+        hasAccessToken: !!accessToken,
+        mediaUrl: contentData.mediaUrl,
+        caption: contentData.caption?.substring(0, 50) + '...'
+      });
+
+      // First, validate the Instagram account and token
+      const validation = await this.validateInstagramAccount(accessToken, igAccountId);
+      if (!validation.valid) {
+        return { success: false, error: validation.error, raw: validation.raw };
+      }
+
       console.log('📸 Creating media container...');
       const containerResponse = await axios.post(`${this.baseURL}/${igAccountId}/media`, {
         image_url: contentData.mediaUrl,
         caption: contentData.caption,
         access_token: accessToken,
       });
+      
+      if (!containerResponse.data?.id) {
+        return { success: false, error: 'Failed to create media container', raw: containerResponse.data };
+      }
+      
       const containerId = containerResponse.data.id;
+      console.log('✅ Media container created:', containerId);
 
-      console.log('✅ Publishing container:', containerId);
+      console.log('📸 Publishing container...');
       const publishResponse = await axios.post(`${this.baseURL}/${igAccountId}/media_publish`, {
         creation_id: containerId,
         access_token: accessToken,
       });
 
+      if (!publishResponse.data?.id) {
+        return { success: false, error: 'Failed to publish media', raw: publishResponse.data };
+      }
+
+      console.log('✅ Instagram post published:', publishResponse.data.id);
       return { success: true, id: publishResponse.data.id };
     } catch (error) {
       const apiError = error.response?.data?.error;
-      return { success: false, error: apiError?.message || 'Failed to post content', raw: apiError };
+      console.error('❌ Instagram posting error:', {
+        message: apiError?.message || error.message,
+        code: apiError?.code,
+        type: apiError?.type,
+        fbtrace_id: apiError?.fbtrace_id
+      });
+      
+      return { 
+        success: false, 
+        error: apiError?.message || 'Failed to post content', 
+        raw: apiError,
+        errorCode: apiError?.code,
+        errorType: apiError?.type
+      };
     }
   }
   
@@ -220,6 +257,108 @@ class InstagramService {
       return {
         success: false,
         error: error.response?.data?.error?.message || 'Failed to get media'
+      };
+    }
+  }
+
+  // Validate Instagram access token
+  async validateToken(accessToken) {
+    try {
+      // Test the token by making a simple API call
+      const response = await axios.get(`${this.baseURL}/me`, {
+        params: {
+          fields: 'id,name',
+          access_token: accessToken,
+        },
+      });
+
+      return {
+        valid: true,
+        user: response.data,
+        canPost: true // If we can get user info, we can likely post
+      };
+    } catch (error) {
+      const apiError = error.response?.data?.error;
+      console.error('Instagram token validation error:', apiError || error.message);
+      
+      return {
+        valid: false,
+        error: apiError?.message || 'Invalid or expired token',
+        canPost: false
+      };
+    }
+  }
+
+  // Validate Instagram account and permissions for posting
+  async validateInstagramAccount(accessToken, igAccountId) {
+    try {
+      console.log('🔍 Validating Instagram account:', { igAccountId, hasToken: !!accessToken });
+      
+      // First, validate the access token
+      const tokenValidation = await this.validateToken(accessToken);
+      if (!tokenValidation.valid) {
+        return {
+          valid: false,
+          error: `Invalid access token: ${tokenValidation.error}`,
+          raw: tokenValidation
+        };
+      }
+
+      // Check if we can access the specific Instagram account
+      try {
+        const accountResponse = await axios.get(`${this.baseURL}/${igAccountId}`, {
+          params: {
+            fields: 'id,username,name,profile_picture_url,account_type,media_count',
+            access_token: accessToken,
+          },
+        });
+
+        console.log('✅ Instagram account validated:', {
+          id: accountResponse.data.id,
+          username: accountResponse.data.username,
+          accountType: accountResponse.data.account_type
+        });
+
+        // Check if it's a business account (required for posting)
+        if (accountResponse.data.account_type !== 'BUSINESS') {
+          return {
+            valid: false,
+            error: 'Instagram account must be a Business account to post content. Please convert your account to Business and connect it to a Facebook Page.',
+            raw: { accountType: accountResponse.data.account_type }
+          };
+        }
+
+        return {
+          valid: true,
+          account: accountResponse.data,
+          canPost: true
+        };
+
+      } catch (accountError) {
+        const apiError = accountError.response?.data?.error;
+        console.error('❌ Instagram account validation failed:', apiError || accountError.message);
+        
+        if (apiError?.code === 100 && apiError?.error_subcode === 33) {
+          return {
+            valid: false,
+            error: 'Instagram account not found or access denied. Please reconnect your Instagram Business account.',
+            raw: apiError
+          };
+        }
+
+        return {
+          valid: false,
+          error: apiError?.message || 'Failed to validate Instagram account',
+          raw: apiError
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Instagram account validation error:', error);
+      return {
+        valid: false,
+        error: error.message || 'Failed to validate Instagram account',
+        raw: error
       };
     }
   }

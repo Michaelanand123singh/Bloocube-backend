@@ -11,15 +11,33 @@ const postValidation = [
     .withMessage('Title must be between 1 and 200 characters')
     .trim(),
   body('content')
-    .isLength({ min: 1, max: 10000 })
-    .withMessage('Content must be between 1 and 10000 characters')
-    .trim(),
+    .custom((value) => {
+      // Handle JSON string content
+      let contentToValidate = value;
+      if (typeof value === 'string' && value.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(value);
+          contentToValidate = parsed.caption || parsed.content || value;
+        } catch (e) {
+          // If parsing fails, use the original value
+          contentToValidate = value;
+        }
+      }
+      
+      if (!contentToValidate || contentToValidate.length < 1) {
+        throw new Error('Content is required');
+      }
+      if (contentToValidate.length > 10000) {
+        throw new Error('Content must be less than 10000 characters');
+      }
+      return true;
+    }),
   body('platform')
     .isIn(['twitter', 'youtube', 'instagram', 'linkedin', 'facebook'])
     .withMessage('Platform must be one of: twitter, youtube, instagram, linkedin, facebook'),
   body('post_type')
-    .isIn(['post', 'story', 'reel', 'video', 'live', 'carousel', 'poll', 'tweet', 'thread'])
-    .withMessage('Post type must be one of: post, story, reel, video, live, carousel, poll, tweet, thread'),
+    .isIn(['post', 'story', 'reel', 'video', 'short', 'live', 'carousel', 'poll', 'tweet', 'thread'])
+    .withMessage('Post type must be one of: post, story, reel, video, short, live, carousel, poll, tweet, thread'),
   body('status')
     .optional()
     .isIn(['draft', 'scheduled', 'published'])

@@ -220,19 +220,28 @@ async postToTwitter(post, user) {
       const title = youtubeContent.title || post.title || 'Untitled Video';
       const description = youtubeContent.description || post.content?.caption || '';
       const tags = youtubeContent.tags || [];
-      const desiredPrivacyStatus = youtubeContent.privacy_status || 'private'; // Get the desired status
+      const desiredPrivacyStatus = youtubeContent.privacy_status || 'public'; // Default to public
       const isShort = youtubeContent.is_short || false;
+      const category = youtubeContent.category || 'Entertainment';
 
       // Handle thumbnail if provided
       let thumbnailBuffer = null;
-      if (post.thumbnail) {
+      console.log('🔍 Checking thumbnail:', {
+        hasThumbnail: !!post.thumbnail,
+        thumbnailData: post.thumbnail
+      });
+      
+      if (post.thumbnail && post.thumbnail.filename) {
         try {
           const thumbnailPath = path.join(__dirname, '..', '..', 'uploads', post.thumbnail.filename);
+          console.log('🖼️ Thumbnail path:', thumbnailPath);
           thumbnailBuffer = fs.readFileSync(thumbnailPath);
-          console.log('🖼️ Thumbnail file found:', post.thumbnail.filename);
+          console.log('🖼️ Thumbnail file found:', post.thumbnail.filename, 'Size:', thumbnailBuffer.length);
         } catch (thumbnailError) {
           console.warn('⚠️ Could not read thumbnail file:', thumbnailError.message);
         }
+      } else {
+        console.log('⚠️ No thumbnail provided or thumbnail missing filename');
       }
 
       console.log('🎬 Uploading video to YouTube:', {
@@ -240,21 +249,26 @@ async postToTwitter(post, user) {
         description: description.substring(0, 100) + '...',
         tagsCount: tags.length,
         videoSize: videoBuffer.length,
-        desiredPrivacyStatus, // This log will now show 'public'
+        desiredPrivacyStatus,
         isShort,
-        hasThumbnail: !!thumbnailBuffer
+        category,
+        hasThumbnail: !!thumbnailBuffer,
+        videoPath: videoPath
       });
 
-      // Upload video to YouTube
+      // Upload video to YouTube with all parameters
       const uploadResult = await youtubeService.uploadVideo(
         accessToken,
         videoBuffer,
         title,
         description,
         tags,
-        desiredPrivacyStatus, // ✅ FIX: Pass the desiredPrivacyStatus directly
+        desiredPrivacyStatus,
         null, // onProgress callback
-        thumbnailBuffer // thumbnail buffer
+        thumbnailBuffer, // thumbnail buffer
+        category, // category
+        isShort, // isShort flag
+        videoPath // video path for analysis
       );
 
       if (uploadResult.success) {
@@ -297,23 +311,51 @@ async postToTwitter(post, user) {
   // Post to Instagram via IG Graph API using stored page token and igAccountId
   async postToInstagram(post, user) {
     try {
+      console.log('🚀 Instagram posting started for user:', user.email);
+      
       const ig = user.socialAccounts?.instagram || {};
       let accessToken = ig.accessToken;
+      let igAccountId = ig.igAccountId;
+
+      console.log('📊 Current Instagram data:', {
+        hasAccessToken: !!accessToken,
+        hasIgAccountId: !!igAccountId,
+        isBasicDisplay: ig.isBasicDisplay,
+        limitations: ig.limitations
+      });
+
+      // Check if this is a Basic Display API account (cannot post)
+      if (ig.isBasicDisplay) {
+        return { 
+          success: false, 
+          error: 'Instagram Basic Display API cannot post content. Please connect an Instagram Business account linked to a Facebook Page for full posting capabilities.',
+          requiresReconnection: true
+        };
+      }
 
       // If IG token missing, try to derive from connected Facebook user access token
-      let igAccountId = ig.igAccountId;
       if (!accessToken || !igAccountId) {
+        console.log('🔄 Attempting to derive Instagram credentials from Facebook...');
         const fb = user.socialAccounts?.facebook;
         if (fb?.accessToken) {
           try {
-            const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
-              params: { access_token: fb.accessToken, fields: 'id,name,access_token,instagram_business_account{id,username,profile_picture_url}' }
+            const pagesResp = await axios.get('https://graph.facebook.com/v20.0/me/accounts', {
+              params: { 
+                access_token: fb.accessToken, 
+                fields: 'id,name,access_token,instagram_business_account{id,username,profile_picture_url,account_type}' 
+              }
             });
             const pages = pagesResp.data?.data || [];
             const withIg = pages.find(p => p.instagram_business_account?.id && p.access_token);
             if (withIg) {
               accessToken = withIg.access_token; // Page token is required for IG Graph posting
               igAccountId = withIg.instagram_business_account.id;
+              console.log('✅ Found Instagram Business account:', {
+                igAccountId,
+                username: withIg.instagram_business_account.username,
+                accountType: withIg.instagram_business_account.account_type
+              });
+              
               // Persist for future posts
               try {
                 await User.findByIdAndUpdate(user._id, {
@@ -325,15 +367,28 @@ async postToTwitter(post, user) {
                     'socialAccounts.instagram.isBasicDisplay': false
                   }
                 });
-              } catch {}
+                console.log('✅ Instagram credentials updated in database');
+              } catch (dbError) {
+                console.error('❌ Failed to update Instagram credentials in database:', dbError.message);
+              }
+            } else {
+              console.log('❌ No Instagram Business account found in Facebook pages');
             }
           } catch (e) {
+            console.error('❌ Failed to fetch Facebook pages:', e.message);
             // fall through to error below
           }
+        } else {
+          console.log('❌ No Facebook access token found');
         }
       }
+
       if (!accessToken || !igAccountId) {
-        return { success: false, error: 'Instagram account not connected. Please connect an Instagram Business account linked to a Facebook Page.' };
+        return { 
+          success: false, 
+          error: 'Instagram account not connected. Please connect an Instagram Business account linked to a Facebook Page.',
+          requiresReconnection: true
+        };
       }
 
       const caption = post.content?.caption || post.title || '';
@@ -348,11 +403,28 @@ async postToTwitter(post, user) {
         return { success: false, error: 'No image URL found for Instagram post' };
       }
 
+      console.log('📸 Attempting Instagram post with:', {
+        igAccountId,
+        hasAccessToken: !!accessToken,
+        mediaUrl: mediaUrl.substring(0, 50) + '...',
+        captionLength: caption.length
+      });
+
       const result = await instagramService.postContent(accessToken, igAccountId, { mediaUrl, caption });
+      
       if (!result.success) {
-        return { success: false, error: result.error || 'Failed to post to Instagram', raw: result.raw };
+        console.error('❌ Instagram posting failed:', result.error);
+        return { 
+          success: false, 
+          error: result.error || 'Failed to post to Instagram', 
+          raw: result.raw,
+          errorCode: result.errorCode,
+          errorType: result.errorType,
+          requiresReconnection: result.errorCode === 100 && result.errorType === 'GraphMethodException'
+        };
       }
 
+      console.log('✅ Instagram post successful:', result.id);
       return { success: true, ig_media_id: result.id, type: 'image' };
     } catch (error) {
       console.error('❌ Instagram posting error:', error);
@@ -360,7 +432,8 @@ async postToTwitter(post, user) {
       return { 
         success: false, 
         error: errorResponse.error.message,
-        errorCode: errorResponse.error.code
+        errorCode: errorResponse.error.code,
+        requiresReconnection: true
       };
     }
   }

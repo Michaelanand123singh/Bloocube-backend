@@ -223,26 +223,69 @@ class YouTubeService {
   // Upload video to YouTube
  // In src/services/social/youtube.js
 
- async uploadVideo(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', onProgress = null, thumbnailBuffer = null) {
+ async uploadVideo(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', onProgress = null, thumbnailBuffer = null, category = 'Entertainment', isShort = false, videoPath = null) {
   try {
     console.log('🎬 Starting YouTube video upload...', {
       title,
       descriptionLength: description?.length,
       tagsCount: tags?.length,
       videoSize: videoBuffer?.length,
-      privacyStatus, // ✅ This should now log the value passed from the controller (e.g., 'public')
-      hasThumbnail: !!thumbnailBuffer
+      privacyStatus,
+      hasThumbnail: !!thumbnailBuffer,
+      category,
+      isShort,
+      videoPath,
+      madeForKids: true // ✅ COPPA compliance
     });
+
+    // Import video analysis utility
+    const VideoAnalysis = require('../../utils/videoAnalysis');
+    
+    // Analyze video if path is provided
+    let videoAnalysis = null;
+    if (videoPath) {
+      try {
+        videoAnalysis = await VideoAnalysis.analyzeVideo(videoPath);
+        console.log('📊 Video analysis completed:', videoAnalysis);
+        
+        // Override isShort based on actual video analysis
+        if (videoAnalysis.isYouTubeShort) {
+          isShort = true;
+          console.log('🎬 Video detected as YouTube Short based on analysis');
+        }
+      } catch (analysisError) {
+        console.warn('⚠️ Video analysis failed, using provided parameters:', analysisError.message);
+      }
+    }
+
+    // Get category ID
+    const categoryId = VideoAnalysis.getYouTubeCategoryId(category);
+    
+    // Adjust title and description for Shorts
+    let finalTitle = title;
+    let finalDescription = description;
+    
+    if (isShort || (videoAnalysis && videoAnalysis.isYouTubeShort)) {
+      finalTitle = VideoAnalysis.generateShortsTitle(title, videoAnalysis || { isYouTubeShort: true });
+      finalDescription = VideoAnalysis.generateShortsDescription(description, videoAnalysis || { isYouTubeShort: true });
+      console.log('🎬 Adjusted content for YouTube Shorts');
+    }
+
+    // Add category and tags prompts to description
+    finalDescription = this.enhanceDescriptionWithPrompts(finalDescription, category, tags, isShort);
+
+    console.log('👶 Setting video as Made for Kids for COPPA compliance');
 
     const metadata = {
       snippet: {
-        title: title,
-        description: description,
+        title: finalTitle,
+        description: finalDescription,
         tags: tags,
-        categoryId: '22', // People & Blogs
+        categoryId: categoryId,
       },
       status: {
-        privacyStatus: privacyStatus, // ✅ FIX: Use the 'privacyStatus' parameter here
+        privacyStatus: privacyStatus,
+        selfDeclaredMadeForKids: true, // ✅ COPPA compliance - set to Made for Kids
       },
     };
 
@@ -288,11 +331,16 @@ class YouTubeService {
       const videoId = uploadResponse.data.id;
       
       // Upload thumbnail if provided
+      let thumbnailResult = null;
       if (thumbnailBuffer) {
         try {
           console.log('🖼️ Uploading custom thumbnail...');
-          await this.uploadThumbnail(accessToken, videoId, thumbnailBuffer);
-          console.log('✅ Thumbnail uploaded successfully');
+          thumbnailResult = await this.uploadThumbnail(accessToken, videoId, thumbnailBuffer);
+          if (thumbnailResult.success) {
+            console.log('✅ Thumbnail uploaded successfully');
+          } else {
+            console.warn('⚠️ Thumbnail upload failed:', thumbnailResult.message);
+          }
         } catch (thumbnailError) {
           console.warn('⚠️ Thumbnail upload failed:', thumbnailError.message);
           // Don't fail the entire upload if thumbnail fails
@@ -305,6 +353,11 @@ class YouTubeService {
         title: uploadResponse.data.snippet.title,
         description: uploadResponse.data.snippet.description,
         publishedAt: uploadResponse.data.snippet.publishedAt,
+        thumbnail: thumbnailResult ? {
+          success: thumbnailResult.success,
+          url: thumbnailResult.thumbnailUrl,
+          message: thumbnailResult.message
+        } : null
       };
     } else {
       throw new Error(`Unexpected status code ${uploadResponse.status} after upload.`);
@@ -324,23 +377,32 @@ class YouTubeService {
 }
 
 // Simple upload for small files (< 10MB)
-async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', thumbnailBuffer = null) { // Ensure privacyStatus is accepted
+async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [], privacyStatus = 'private', thumbnailBuffer = null, category = 'Entertainment', isShort = false) { // Ensure privacyStatus is accepted
   try {
+    // Import video analysis utility
+    const VideoAnalysis = require('../../utils/videoAnalysis');
+    
     const formData = new FormData();
 
     // Create blob from buffer
     const videoBlob = new Blob([videoBuffer], { type: 'video/mp4' });
     formData.append('video', videoBlob, 'video.mp4');
 
+    // Enhance description with prompts
+    const enhancedDescription = this.enhanceDescriptionWithPrompts(description, category, tags, isShort);
+
+    console.log('👶 Setting video as Made for Kids for COPPA compliance (Simple Upload)');
+
     const metadata = {
       snippet: {
         title: title,
-        description: description,
+        description: enhancedDescription,
         tags: tags,
-        categoryId: '22'
+        categoryId: VideoAnalysis.getYouTubeCategoryId(category)
       },
       status: {
-        privacyStatus: privacyStatus // ✅ FIX: Use the 'privacyStatus' parameter here
+        privacyStatus: privacyStatus, // ✅ FIX: Use the 'privacyStatus' parameter here
+        selfDeclaredMadeForKids: true, // ✅ COPPA compliance - set to Made for Kids
       }
     };
 
@@ -395,18 +457,36 @@ async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [],
   // Upload custom thumbnail for a video
   async uploadThumbnail(accessToken, videoId, thumbnailBuffer) {
     try {
-      console.log('🖼️ Uploading thumbnail for video:', videoId);
+      console.log('🖼️ Uploading thumbnail for video:', videoId, 'Size:', thumbnailBuffer.length);
       
+      // Determine content type based on buffer header
+      let contentType = 'image/jpeg'; // Default to JPEG
+      if (thumbnailBuffer[0] === 0x89 && thumbnailBuffer[1] === 0x50) {
+        contentType = 'image/png';
+      } else if (thumbnailBuffer[0] === 0xFF && thumbnailBuffer[1] === 0xD8) {
+        contentType = 'image/jpeg';
+      } else if (thumbnailBuffer[0] === 0x47 && thumbnailBuffer[1] === 0x49) {
+        contentType = 'image/gif';
+      }
+      
+      console.log('🖼️ Detected thumbnail format:', contentType);
+      
+      // Add delay to ensure video is fully processed
+      console.log('⏳ Waiting 5 seconds for video processing...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Use the correct YouTube Data API v3 thumbnails.set endpoint
       const response = await axios.post(
-        `${this.baseURL}/thumbnails/set`,
+        `https://www.googleapis.com/upload/youtube/v3/thumbnails/set`,
         thumbnailBuffer,
         {
           params: {
-            videoId: videoId
+            videoId: videoId,
+            uploadType: 'media'
           },
           headers: {
             'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'image/jpeg', // YouTube expects JPEG format
+            'Content-Type': contentType,
             'Content-Length': thumbnailBuffer.length
           },
           maxContentLength: 2 * 1024 * 1024, // 2MB max for thumbnails
@@ -416,15 +496,80 @@ async uploadVideoSimple(accessToken, videoBuffer, title, description, tags = [],
       console.log('✅ Thumbnail uploaded successfully:', response.data);
       return {
         success: true,
-        thumbnailUrl: response.data.items?.[0]?.default?.url
+        thumbnailUrl: response.data.items?.[0]?.default?.url || response.data.thumbnailUrl
       };
+      
     } catch (error) {
       console.error('❌ Thumbnail upload error:', {
         message: error.message,
         status: error.response?.status,
         data: error.response?.data,
       });
-      throw new Error(error.response?.data?.error?.message || 'Failed to upload thumbnail');
+      
+      // Don't fail the entire upload if thumbnail fails
+      return {
+        success: false,
+        message: error.response?.data?.error?.message || 'Failed to upload thumbnail',
+        thumbnailUrl: null
+      };
+    }
+  }
+
+  // Enhance description with category and tags prompts
+  enhanceDescriptionWithPrompts(description, category, tags, isShort = false) {
+    try {
+      console.log('📝 Enhancing description with prompts:', { category, tagsCount: tags?.length, isShort });
+      
+      let enhancedDescription = description || '';
+      
+      // Add category prompt
+      if (category && category !== 'Entertainment') {
+        const categoryPrompt = `\n\n📂 Category: ${category}`;
+        if (!enhancedDescription.includes('Category:')) {
+          enhancedDescription += categoryPrompt;
+        }
+      }
+      
+      // Add tags prompt
+      if (tags && tags.length > 0) {
+        const tagsList = tags.join(', ');
+        const tagsPrompt = `\n\n🏷️ Tags: ${tagsList}`;
+        if (!enhancedDescription.includes('Tags:')) {
+          enhancedDescription += tagsPrompt;
+        }
+      }
+      
+      // Add content type prompt
+      if (isShort) {
+        const shortsPrompt = `\n\n🎬 Content Type: YouTube Short`;
+        if (!enhancedDescription.includes('Content Type:')) {
+          enhancedDescription += shortsPrompt;
+        }
+      } else {
+        const videoPrompt = `\n\n🎬 Content Type: YouTube Video`;
+        if (!enhancedDescription.includes('Content Type:')) {
+          enhancedDescription += videoPrompt;
+        }
+      }
+      
+      // Add engagement prompts
+      const engagementPrompts = [
+        '\n\n💬 What do you think about this content?',
+        '\n\n👍 Like if you enjoyed this video!',
+        '\n\n🔔 Subscribe for more content like this!'
+      ];
+      
+      // Only add engagement prompts if description is not too long
+      if (enhancedDescription.length < 4000) {
+        enhancedDescription += engagementPrompts.join('');
+      }
+      
+      console.log('✅ Description enhanced successfully');
+      return enhancedDescription;
+      
+    } catch (error) {
+      console.error('❌ Error enhancing description:', error.message);
+      return description || ''; // Return original description if enhancement fails
     }
   }
 
