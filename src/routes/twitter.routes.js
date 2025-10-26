@@ -31,6 +31,8 @@ router.delete('/disconnect', twitterController.disconnect);
 
 // Content posting - main endpoint for all post types
 router.post('/post', twitterController.postContent); // Handles: post, thread, poll
+// Backward-compat alias
+router.post('/tweet', twitterController.postContent);
 
 // Media management
 router.post('/upload-media', upload.single('media'), persistUploads, twitterController.uploadMedia);

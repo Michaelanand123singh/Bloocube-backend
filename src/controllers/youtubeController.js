@@ -253,6 +253,22 @@ class YouTubeController {
     }
   }
 
+  // Lightweight connection status (DB-only, no API calls)
+  async getStatus(req, res) {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId).select('socialAccounts.youtube');
+
+      const yt = user?.socialAccounts?.youtube;
+      const connected = !!(yt && (yt.accessToken || yt.refreshToken || yt.connectedAt));
+
+      return res.json({ success: true, connected });
+    } catch (error) {
+      console.error('❌ YouTube status error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to get YouTube status' });
+    }
+  }
+
   // Upload video to YouTube
 // Upload video to YouTube with improved error handling
 async uploadVideo(req, res) {

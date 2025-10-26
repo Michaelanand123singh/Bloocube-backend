@@ -370,7 +370,7 @@ async postContent(req, res) {
       const userId = req.userId;
       const user = await User.findById(userId);
 
-      if (!user || !user.socialAccounts?.twitter?.accessToken) {
+      if (!user || !user.socialAccounts?.twitter) {
         return res.status(400).json({ success: false, error: 'Twitter account not connected' });
       }
 
@@ -378,7 +378,20 @@ async postContent(req, res) {
         return res.status(400).json({ success: false, error: 'No media file provided' });
       }
 
-      const result = await twitterService.uploadMedia(user.socialAccounts.twitter.accessToken, req.file.buffer, req.file.mimetype);
+      // Prefer OAuth 1.0a user tokens for media uploads (v1.1)
+      const oauthAccessToken = user.socialAccounts.twitter.oauth_accessToken;
+      const oauthAccessSecret = user.socialAccounts.twitter.oauth_accessSecret;
+
+      if (!oauthAccessToken || !oauthAccessSecret) {
+        return res.status(400).json({ success: false, error: 'Missing Twitter OAuth 1.0a credentials. Please reconnect Twitter.' });
+      }
+
+      const result = await twitterService.uploadMedia(
+        oauthAccessToken,
+        oauthAccessSecret,
+        req.file.buffer,
+        req.file.mimetype
+      );
 
       if (!result.success) {
         return res.status(400).json({ success: false, error: result.error });
