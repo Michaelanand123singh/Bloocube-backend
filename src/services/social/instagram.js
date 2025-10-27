@@ -3,24 +3,19 @@ const config = require('../../config/env');
 
 class InstagramService {
   constructor() {
-    this.clientId = config.FACEBOOK_APP_ID; // Simplified: Always use Facebook App ID
-    this.clientSecret = config.FACEBOOK_APP_SECRET; // Simplified: Always use Facebook App Secret
+    this.clientId = config.FACEBOOK_APP_ID;
+    this.clientSecret = config.FACEBOOK_APP_SECRET;
     this.baseURL = 'https://graph.facebook.com/v20.0';
     this.authURL = 'https://www.facebook.com/v20.0/dialog/oauth';
   }
 
-  // Method to set credentials dynamically
-  setCredentials(clientId, clientSecret) {
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
-  }
-
   generateAuthURL(redirectUri, state) {
-    // Use Facebook Login scopes for Instagram Business API
-    const resolvedScopes = (config.INSTAGRAM_SCOPES || '').split(',')
+    const resolvedScopes = ((config.INSTAGRAM_SCOPES || '')
+      .split(',')
       .map(s => s.trim())
       .filter(Boolean)
-      .join(',') || 'pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_insights,instagram_content_publish';
+      .join(',')) ||
+      'pages_show_list,pages_read_engagement,instagram_basic,instagram_manage_insights,instagram_content_publish,business_management';
 
     const params = new URLSearchParams({
       client_id: this.clientId,
@@ -33,7 +28,6 @@ class InstagramService {
     return `${this.authURL}?${params.toString()}`;
   }
 
-  // REWRITTEN & SIMPLIFIED: exchangeCodeForToken
   async exchangeCodeForToken(code, redirectUri) {
     try {
       console.log('🔄 Step 1: Exchanging code for a short-lived user token...');
@@ -57,7 +51,7 @@ class InstagramService {
         },
       });
       const longLivedUserToken = longLivedResponse.data.access_token;
-      
+
       console.log('🔄 Step 3: Fetching user pages and connected Instagram account...');
       const accountsResponse = await axios.get(`${this.baseURL}/me/accounts`, {
         params: {
@@ -72,47 +66,37 @@ class InstagramService {
       }
 
       const connectedPage = pages.find(page => page.instagram_business_account);
+      
+      // REMOVED: The incorrect fallback to the Basic Display API has been removed.
+      // The Graph API flow requires a Professional (Business/Creator) account linked to a Facebook Page.
       if (!connectedPage) {
-        // Fallback: Try to use Instagram Basic Display API for personal accounts
-        console.log('🔄 No Instagram Business account found, trying Instagram Basic Display API...');
-        
-        try {
-          // Get user's Instagram account info using Basic Display API
-          const basicDisplayResponse = await axios.get(`${this.baseURL}/me`, {
-            params: {
-              fields: 'id,name',
-              access_token: longLivedUserToken,
-            },
-          });
-
-          // For Basic Display API, we can only get basic info, not post content
-          return {
-            success: true,
-            accessToken: longLivedUserToken,
-            igAccountId: basicDisplayResponse.data.id,
-            igUsername: basicDisplayResponse.data.name,
-            igName: basicDisplayResponse.data.name,
-            igProfileImageUrl: null,
-            expiresIn: 60 * 24 * 60 * 60,
-            isBasicDisplay: true, // Flag to indicate this is Basic Display API
-            limitations: 'Basic Display API - Limited functionality, cannot post content'
-          };
-        } catch (basicDisplayError) {
-          throw new Error('No Instagram Business Account found linked to your Facebook Pages. Please convert your Instagram account to a Business account and connect it to a Facebook Page to use full Instagram integration features.');
-        }
+        throw new Error('No Instagram Business Account found linked to your Facebook Pages. Please convert your Instagram account to a Business or Creator account and connect it to a Facebook Page to use the full integration features.');
       }
 
       console.log(`✅ Found connected page: ${connectedPage.name}`);
-      
-      // The Page Access Token is the one we need for all future IG API calls
+
+      // The Page Access Token is the one we need for all future IG API calls.
+      // We also need to get its expiration time to store it.
+      const debugTokenResponse = await axios.get(`${this.baseURL}/debug_token`, {
+        params: {
+          input_token: connectedPage.access_token,
+          access_token: `${this.clientId}|${this.clientSecret}` // App Access Token
+        }
+      });
+
+      const expiresIn = debugTokenResponse.data.data.expires_at? 
+        (debugTokenResponse.data.data.expires_at - Math.floor(Date.now() / 1000)) : 
+        (60 * 60 * 24 * 60); // Default to 60 days if not present
+
       return {
         success: true,
-        accessToken: connectedPage.access_token, // This is the long-lived Page Access Token
+        // IMPORTANT: This is the long-lived Page Access Token, required for API calls.
+        accessToken: connectedPage.access_token,
         igAccountId: connectedPage.instagram_business_account.id,
         igUsername: connectedPage.instagram_business_account.username,
         igName: connectedPage.instagram_business_account.name,
         igProfileImageUrl: connectedPage.instagram_business_account.profile_picture_url,
-        expiresIn: 60 * 24 * 60 * 60, // Page tokens are typically long-lived (60+ days)
+        expiresIn: expiresIn, // CHANGED: Return expires_in seconds
         isBasicDisplay: false
       };
 
@@ -123,13 +107,39 @@ class InstagramService {
       return { success: false, error: errorMessage, raw: apiError };
     }
   }
-  
-  // No refreshToken method needed. If a token is invalid, the user must reconnect.
 
-  // UPDATED SIGNATURE: Get Instagram user profile
+  // ADDED: New method to refresh a long-lived access token [1]
+  async refreshToken(accessToken) {
+    try {
+      console.log('🔄 Refreshing long-lived Instagram token...');
+      // NOTE: The refresh endpoint is on graph.instagram.com, not graph.facebook.com
+      const response = await axios.get('https://graph.instagram.com/refresh_access_token', {
+        params: {
+          grant_type: 'ig_refresh_token',
+          access_token: accessToken,
+        },
+      });
+
+      const { access_token: newAccessToken, expires_in: expiresIn } = response.data;
+      console.log('✅ Token refreshed successfully.');
+
+      return {
+        success: true,
+        accessToken: newAccessToken,
+        expiresIn: expiresIn,
+      };
+    } catch (error) {
+      const apiError = error.response?.data?.error;
+      const errorMessage = apiError?.message || 'Token refresh failed.';
+      console.error('❌ Instagram token refresh error:', apiError || error);
+      return { success: false, error: errorMessage, raw: apiError };
+    }
+  }
+
   async getProfile(accessToken, igAccountId) {
     try {
-      const response = await axios.get(`https://graph.instagram.com/${igAccountId}`, {
+      // NOTE: Profile endpoint is on graph.facebook.com when using Page-backed tokens
+      const response = await axios.get(`${this.baseURL}/${igAccountId}`, {
         params: {
           fields: 'id,username,followers_count,media_count,name,profile_picture_url',
           access_token: accessToken,
@@ -137,22 +147,20 @@ class InstagramService {
       });
       return { success: true, user: response.data };
     } catch (error) {
-        const apiError = error.response?.data?.error;
-        return { success: false, error: apiError?.message || 'Failed to get profile' };
+      const apiError = error.response?.data?.error;
+      return { success: false, error: apiError?.message || 'Failed to get profile' };
     }
   }
 
-  // UPDATED: All API methods now correctly accept igAccountId
   async postContent(accessToken, igAccountId, contentData) {
     try {
       console.log('📸 Instagram posting details:', {
         igAccountId,
-        hasAccessToken: !!accessToken,
+        hasAccessToken:!!accessToken,
         mediaUrl: contentData.mediaUrl,
         caption: contentData.caption?.substring(0, 50) + '...'
       });
 
-      // First, validate the Instagram account and token
       const validation = await this.validateInstagramAccount(accessToken, igAccountId);
       if (!validation.valid) {
         return { success: false, error: validation.error, raw: validation.raw };
@@ -164,11 +172,11 @@ class InstagramService {
         caption: contentData.caption,
         access_token: accessToken,
       });
-      
+
       if (!containerResponse.data?.id) {
         return { success: false, error: 'Failed to create media container', raw: containerResponse.data };
       }
-      
+
       const containerId = containerResponse.data.id;
       console.log('✅ Media container created:', containerId);
 
@@ -192,18 +200,17 @@ class InstagramService {
         type: apiError?.type,
         fbtrace_id: apiError?.fbtrace_id
       });
-      
-      return { 
-        success: false, 
-        error: apiError?.message || 'Failed to post content', 
+
+      return {
+        success: false,
+        error: apiError?.message || 'Failed to post content',
         raw: apiError,
         errorCode: apiError?.code,
         errorType: apiError?.type
       };
     }
   }
-  
-  // Other methods (postStory, getInsights, etc.) should also use the igAccountId
+
   async getInsights(accessToken, igAccountId) {
     try {
       const response = await axios.get(`${this.baseURL}/${igAccountId}/insights`, {
@@ -220,51 +227,8 @@ class InstagramService {
     }
   }
 
-  // Get user profile by username (for competitor analysis)
-  async getUserProfile(username) {
-    try {
-      // Note: Instagram Basic Display API doesn't support username lookup for public profiles
-      // This would require Instagram Graph API with proper business account setup
-      // For now, return a structure that indicates the limitation
-      return {
-        success: false,
-        error: 'Instagram profile lookup requires Instagram Graph API with business account',
-        username: username,
-        platform: 'instagram'
-      };
-    } catch (error) {
-      console.error('Instagram profile fetch error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.error?.message || 'Failed to get profile'
-      };
-    }
-  }
-
-  // Get user media (for competitor analysis)
-  async getUserMedia(username, options = {}) {
-    try {
-      // Note: Instagram Basic Display API doesn't support public profile media access
-      // This would require Instagram Graph API with proper business account setup
-      return {
-        success: false,
-        error: 'Instagram media collection requires Instagram Graph API with business account',
-        username: username,
-        platform: 'instagram'
-      };
-    } catch (error) {
-      console.error('Instagram media fetch error:', error.response?.data || error.message);
-      return {
-        success: false,
-        error: error.response?.data?.error?.message || 'Failed to get media'
-      };
-    }
-  }
-
-  // Validate Instagram access token
   async validateToken(accessToken) {
     try {
-      // Test the token by making a simple API call
       const response = await axios.get(`${this.baseURL}/me`, {
         params: {
           fields: 'id,name',
@@ -275,12 +239,12 @@ class InstagramService {
       return {
         valid: true,
         user: response.data,
-        canPost: true // If we can get user info, we can likely post
+        canPost: true
       };
     } catch (error) {
       const apiError = error.response?.data?.error;
       console.error('Instagram token validation error:', apiError || error.message);
-      
+
       return {
         valid: false,
         error: apiError?.message || 'Invalid or expired token',
@@ -289,76 +253,53 @@ class InstagramService {
     }
   }
 
-  // Validate Instagram account and permissions for posting
   async validateInstagramAccount(accessToken, igAccountId) {
     try {
-      console.log('🔍 Validating Instagram account:', { igAccountId, hasToken: !!accessToken });
-      
-      // First, validate the access token
-      const tokenValidation = await this.validateToken(accessToken);
-      if (!tokenValidation.valid) {
+      console.log('🔍 Validating Instagram account:', { igAccountId, hasToken:!!accessToken });
+
+      const accountResponse = await axios.get(`${this.baseURL}/${igAccountId}`, {
+        params: {
+          fields: 'id,username,name,profile_picture_url,account_type,media_count',
+          access_token: accessToken,
+        },
+      });
+
+      console.log('✅ Instagram account validated:', {
+        id: accountResponse.data.id,
+        username: accountResponse.data.username,
+        accountType: accountResponse.data.account_type
+      });
+
+      if (accountResponse.data.account_type!== 'BUSINESS' && accountResponse.data.account_type!== 'CREATOR') {
         return {
           valid: false,
-          error: `Invalid access token: ${tokenValidation.error}`,
-          raw: tokenValidation
+          error: 'Instagram account must be a Business or Creator account to post content.',
+          raw: { accountType: accountResponse.data.account_type }
         };
       }
 
-      // Check if we can access the specific Instagram account
-      try {
-        const accountResponse = await axios.get(`${this.baseURL}/${igAccountId}`, {
-          params: {
-            fields: 'id,username,name,profile_picture_url,account_type,media_count',
-            access_token: accessToken,
-          },
-        });
+      return {
+        valid: true,
+        account: accountResponse.data,
+        canPost: true
+      };
 
-        console.log('✅ Instagram account validated:', {
-          id: accountResponse.data.id,
-          username: accountResponse.data.username,
-          accountType: accountResponse.data.account_type
-        });
+    } catch (accountError) {
+      const apiError = accountError.response?.data?.error;
+      console.error('❌ Instagram account validation failed:', apiError || accountError.message);
 
-        // Check if it's a business account (required for posting)
-        if (accountResponse.data.account_type !== 'BUSINESS') {
-          return {
-            valid: false,
-            error: 'Instagram account must be a Business account to post content. Please convert your account to Business and connect it to a Facebook Page.',
-            raw: { accountType: accountResponse.data.account_type }
-          };
-        }
-
-        return {
-          valid: true,
-          account: accountResponse.data,
-          canPost: true
-        };
-
-      } catch (accountError) {
-        const apiError = accountError.response?.data?.error;
-        console.error('❌ Instagram account validation failed:', apiError || accountError.message);
-        
-        if (apiError?.code === 100 && apiError?.error_subcode === 33) {
-          return {
-            valid: false,
-            error: 'Instagram account not found or access denied. Please reconnect your Instagram Business account.',
-            raw: apiError
-          };
-        }
-
+      if (apiError?.code === 100 && apiError?.error_subcode === 33) {
         return {
           valid: false,
-          error: apiError?.message || 'Failed to validate Instagram account',
+          error: 'Instagram account not found or access denied. Please reconnect your Instagram Business account.',
           raw: apiError
         };
       }
 
-    } catch (error) {
-      console.error('❌ Instagram account validation error:', error);
       return {
         valid: false,
-        error: error.message || 'Failed to validate Instagram account',
-        raw: error
+        error: apiError?.message || 'Failed to validate Instagram account',
+        raw: apiError
       };
     }
   }
