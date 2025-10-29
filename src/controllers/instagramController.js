@@ -154,8 +154,8 @@ class InstagramController {
       );
 
       console.log("✅ Instagram user updated in DB");
-      // CHANGED: Redirect with a clear success parameter for the frontend to detect
-      return res.redirect(buildRedirectUrl(redirectToFrontend, { instagram_connected: 'true' }));
+      // Redirect with parameter expected by frontend
+      return res.redirect(buildRedirectUrl(redirectToFrontend, { instagram: 'success' }));
     } catch (error) {
       console.error("🔥 Instagram callback error:", error);
       const msg = serializeErrorToUrl(error);
@@ -251,16 +251,26 @@ class InstagramController {
       const userId = req.userId || req.user?.id;
       const user = await User.findById(userId).select('socialAccounts.instagram');
 
-      if (!user ||!user.socialAccounts?.instagram ||!user.socialAccounts.instagram.accessToken) {
-        return res.json({
-          success: false,
-          error: 'Instagram account not connected'
-        });
+      if (!user || !user.socialAccounts?.instagram || !user.socialAccounts.instagram.accessToken) {
+        return res.json({ success: false, error: 'Instagram account not connected' });
       }
 
       const instagramAccount = user.socialAccounts.instagram;
 
-      res.json({
+      // Live-validate token by fetching profile; if invalid, report disconnected
+      try {
+        const live = await instagramService.getProfile(
+          instagramAccount.accessToken,
+          instagramAccount.igAccountId || instagramAccount.id
+        );
+        if (!live.success) {
+          return res.json({ success: false, error: live.error || 'Instagram token invalid or expired' });
+        }
+      } catch (e) {
+        return res.json({ success: false, error: 'Instagram validation failed' });
+      }
+
+      return res.json({
         success: true,
         profile: {
           id: instagramAccount.igAccountId || instagramAccount.id,

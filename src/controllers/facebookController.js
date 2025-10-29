@@ -177,7 +177,7 @@ const handleCallback = asyncHandler(async (req, res) => {
   }
 });
 
-// Get Facebook profile
+// Get Facebook profile (live-validates token)
 const getProfile = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
@@ -193,6 +193,14 @@ const getProfile = asyncHandler(async (req, res) => {
     }
 
     const facebookAccount = user.socialAccounts.facebook;
+    // Validate token with a lightweight /me call; if invalid, report disconnected
+    try {
+      await axios.get(`https://graph.facebook.com/v18.0/me`, {
+        params: { access_token: facebookAccount.accessToken, fields: 'id' }
+      });
+    } catch (e) {
+      return res.json({ success: false, error: 'Facebook token invalid or expired' });
+    }
     
     res.json({
       success: true,

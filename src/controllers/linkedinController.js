@@ -371,17 +371,17 @@ class LinkedInController {
      const user = await User.findById(userId).select('socialAccounts.linkedin');
 
      if (!user || !user.socialAccounts?.linkedin?.accessToken) {
-       return res.status(400).json({
-         success: false,
-         error: 'LinkedIn not connected'
-       });
+       return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
      }
 
-    // ✅ Just return the saved profile data, like you do for Twitter
-    return res.json({
-      success: true,
-      profile: user.socialAccounts.linkedin
-    });
+     // Live-validate the token via LinkedIn userinfo; if invalid, report disconnected
+     const accessToken = user.socialAccounts.linkedin.accessToken;
+     const live = await linkedinService.getUserProfile(accessToken);
+     if (!live.success) {
+       return res.status(200).json({ success: false, error: live.error || 'LinkedIn token invalid or expired' });
+     }
+
+     return res.json({ success: true, profile: user.socialAccounts.linkedin });
 
   } catch (error) {
     console.error('Error getting LinkedIn profile:', error);
