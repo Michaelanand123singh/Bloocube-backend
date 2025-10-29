@@ -26,12 +26,13 @@ class PostController {
     this.postToTwitter = this.postToTwitter.bind(this);
     this.postToYouTube = this.postToYouTube.bind(this);
     this.postToLinkedIn = this.postToLinkedIn.bind(this);
+    this.postToInstagram = this.postToInstagram.bind(this);
     this.publishPostById = this.publishPostById.bind(this);
     this.publishPost = this.publishPost.bind(this);
     this.schedulePostById = this.schedulePostById.bind(this);
     this.schedulePost = this.schedulePost.bind(this);
-    // REMOVED: this.processUploadedMedia = this.processUploadedMedia.bind(this); // This is no longer needed
-    this.createPost = this.createPost.bind(this); // Already correctly bound
+ 
+    this.createPost = this.createPost.bind(this);
   }
 
   // Helper method to post to platform with retry logic
@@ -103,33 +104,40 @@ async postToTwitter(post, user) {
   try {
     console.log('--- 🐦 DEBUGGING postToTwitter ---');
     
-    // ✅ FIX: Check for OAuth 2.0 access token
-    if (!user.socialAccounts?.twitter?.accessToken) {
-      console.log('❌ Twitter account not connected or missing access token for user:', user._id);
+    const tw = user.socialAccounts?.twitter || {};
+    // Accept either OAuth 2.0 or OAuth 1.0a tokens
+    const hasOAuth2 = !!tw.accessToken;
+    const hasOAuth1 = !!tw.oauth_accessToken && !!tw.oauth_accessSecret;
+    if (!hasOAuth2 && !hasOAuth1) {
+      console.log('❌ Twitter account not connected or missing credentials for user:', user._id);
       return { success: false, error: 'Twitter account not connected' };
     }
 
-    // ✅ FIX: Initialize the twitter-api-v2 client with OAuth 2.0 credentials
-    const client = new TwitterApi({
-      clientId: config.TWITTER_CLIENT_ID,
-      clientSecret: config.TWITTER_CLIENT_SECRET,
-      accessToken: user.socialAccounts.twitter.accessToken,
-    });
+    // Initialize twitter client depending on available credentials
+    const client = hasOAuth2
+      ? new TwitterApi({
+          clientId: config.TWITTER_CLIENT_ID,
+          clientSecret: config.TWITTER_CLIENT_SECRET,
+          accessToken: tw.accessToken,
+        })
+      : new TwitterApi({
+          appKey: config.TWITTER_APP_KEY,
+          appSecret: config.TWITTER_APP_SECRET,
+          accessToken: tw.oauth_accessToken,
+          accessSecret: tw.oauth_accessSecret,
+        });
 
     const mediaIds = [];
     if (post.media && post.media.length > 0) {
       console.log('📸 Starting media processing loop...');
       for (const mediaFile of post.media) {
-        const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-        if (!fs.existsSync(mediaPath)) {
-          console.error(`❌ File not found at path: ${mediaPath}`);
+        console.log(`📤 Preparing ${mediaFile.filename} for Twitter upload...`);
+        const { buffer, mimeType } = await loadMediaBuffer(mediaFile);
+        if (!buffer) {
+          console.error(`❌ Could not load media into buffer: ${mediaFile.filename}`);
           continue;
         }
-
-        console.log(`📤 Uploading ${mediaFile.filename} to Twitter...`);
-        
-        // ✅ FIX: Use the client to upload media
-        const mediaId = await client.v1.uploadMedia(mediaPath, { mimeType: mediaFile.mimeType });
+        const mediaId = await client.v1.uploadMedia(buffer, { mimeType: mimeType || mediaFile.mimeType });
         if (mediaId) {
           mediaIds.push(mediaId);
           console.log(`✅ Media uploaded successfully. Media ID: ${mediaId}`);
@@ -209,11 +217,11 @@ async postToTwitter(post, user) {
         };
       }
 
-      // Read the video file
-      const fs = require('fs');
-      const path = require('path');
-      const videoPath = path.join(__dirname, '..', '..', 'uploads', videoFile.filename);
-      const videoBuffer = fs.readFileSync(videoPath);
+      // Load video buffer (supports local/GCS/URL)
+      const { buffer: videoBuffer } = await loadMediaBuffer(videoFile);
+      if (!videoBuffer) {
+        return { success: false, error: 'Unable to load video media for YouTube upload' };
+      }
 
       // Get YouTube content from post
       const youtubeContent = post.platformContent?.youtube || {};
@@ -233,12 +241,13 @@ async postToTwitter(post, user) {
       
       if (post.thumbnail && post.thumbnail.filename) {
         try {
-          const thumbnailPath = path.join(__dirname, '..', '..', 'uploads', post.thumbnail.filename);
-          console.log('🖼️ Thumbnail path:', thumbnailPath);
-          thumbnailBuffer = fs.readFileSync(thumbnailPath);
-          console.log('🖼️ Thumbnail file found:', post.thumbnail.filename, 'Size:', thumbnailBuffer.length);
+          const loadedThumb = await loadMediaBuffer(post.thumbnail);
+          if (loadedThumb.buffer) {
+            thumbnailBuffer = loadedThumb.buffer;
+            console.log('🖼️ Thumbnail buffer loaded:', post.thumbnail.filename, 'Size:', thumbnailBuffer.length);
+          }
         } catch (thumbnailError) {
-          console.warn('⚠️ Could not read thumbnail file:', thumbnailError.message);
+          console.warn('⚠️ Could not load thumbnail:', thumbnailError.message);
         }
       } else {
         console.log('⚠️ No thumbnail provided or thumbnail missing filename');
@@ -268,7 +277,7 @@ async postToTwitter(post, user) {
         thumbnailBuffer, // thumbnail buffer
         category, // category
         isShort, // isShort flag
-        videoPath // video path for analysis
+        null // video path not needed when using buffer
       );
 
       if (uploadResult.success) {
@@ -311,112 +320,77 @@ async postToTwitter(post, user) {
   // Post to Instagram via IG Graph API using stored page token and igAccountId
   async postToInstagram(post, user) {
     try {
-      console.log('🚀 Instagram posting started for user:', user.email);
-      
       const ig = user.socialAccounts?.instagram || {};
       let accessToken = ig.accessToken;
       let igAccountId = ig.igAccountId;
 
-      console.log('📊 Current Instagram data:', {
-        hasAccessToken: !!accessToken,
-        hasIgAccountId: !!igAccountId,
-        isBasicDisplay: ig.isBasicDisplay,
-        limitations: ig.limitations
-      });
-
-      // Check if this is a Basic Display API account (cannot post)
       if (ig.isBasicDisplay) {
-        return { 
-          success: false, 
-          error: 'Instagram Basic Display API cannot post content. Please connect an Instagram Business account linked to a Facebook Page for full posting capabilities.',
+        return {
+          success: false,
+          error: 'Cannot post content with a Basic Display connection. Please connect an Instagram Business or Creator account.',
           requiresReconnection: true
         };
       }
 
-      // If IG token missing, try to derive from connected Facebook user access token
-      if (!accessToken || !igAccountId) {
-        console.log('🔄 Attempting to derive Instagram credentials from Facebook...');
-        const fb = user.socialAccounts?.facebook;
-        if (fb?.accessToken) {
-          try {
-            const pagesResp = await axios.get('https://graph.facebook.com/v20.0/me/accounts', {
-              params: { 
-                access_token: fb.accessToken, 
-                fields: 'id,name,access_token,instagram_business_account{id,username,profile_picture_url,account_type}' 
-              }
-            });
-            const pages = pagesResp.data?.data || [];
-            const withIg = pages.find(p => p.instagram_business_account?.id && p.access_token);
-            if (withIg) {
-              accessToken = withIg.access_token; // Page token is required for IG Graph posting
-              igAccountId = withIg.instagram_business_account.id;
-              console.log('✅ Found Instagram Business account:', {
-                igAccountId,
-                username: withIg.instagram_business_account.username,
-                accountType: withIg.instagram_business_account.account_type
-              });
-              
-              // Persist for future posts
-              try {
-                await User.findByIdAndUpdate(user._id, {
-                  $set: {
-                    'socialAccounts.instagram.accessToken': accessToken,
-                    'socialAccounts.instagram.igAccountId': igAccountId,
-                    'socialAccounts.instagram.username': withIg.instagram_business_account.username,
-                    'socialAccounts.instagram.connectedAt': new Date(),
-                    'socialAccounts.instagram.isBasicDisplay': false
-                  }
-                });
-                console.log('✅ Instagram credentials updated in database');
-              } catch (dbError) {
-                console.error('❌ Failed to update Instagram credentials in database:', dbError.message);
-              }
-            } else {
-              console.log('❌ No Instagram Business account found in Facebook pages');
-            }
-          } catch (e) {
-            console.error('❌ Failed to fetch Facebook pages:', e.message);
-            // fall through to error below
-          }
-        } else {
-          console.log('❌ No Facebook access token found');
-        }
-      }
-
-      if (!accessToken || !igAccountId) {
-        return { 
-          success: false, 
-          error: 'Instagram account not connected. Please connect an Instagram Business account linked to a Facebook Page.',
+      if (!accessToken ||!igAccountId) {
+        return {
+          success: false,
+          error: 'Instagram account not connected. Please connect an Instagram Business or Creator account in settings.',
           requiresReconnection: true
         };
+      }
+
+      if (!post.media || post.media.length === 0) {
+        return { success: false, error: 'An image or video file is required for all Instagram posts.' };
+      }
+
+      const mediaFile = post.media; // Assumes single media posts for now
+      const mediaUrl = this.getAbsoluteMediaUrl(mediaFile.url);
+
+      if (!mediaUrl) {
+        return { success: false, error: 'Could not determine a public URL for the media file. Ensure it was uploaded correctly.' };
       }
 
       const caption = post.content?.caption || post.title || '';
-      // Prefer explicitly provided platformContent, fallback to first image media
-      let mediaUrl = post.platformContent?.instagram?.mediaUrl;
-      if (!mediaUrl && Array.isArray(post.media) && post.media.length > 0) {
-        const firstImage = post.media.find(m => m.type === 'image');
-        if (firstImage?.url) mediaUrl = this.getAbsoluteMediaUrl(firstImage.url);
+      const postType = post.post_type; // 'post', 'story', 'reel' from frontend
+
+      let contentData = { caption };
+
+      if (mediaFile.type === 'image') {
+        contentData.image_url = mediaUrl;
+        if (postType === 'story') {
+          contentData.media_type = 'STORIES';
+        }
+        // For a standard 'post', media_type is not required for images.
+      } else if (mediaFile.type === 'video') {
+        contentData.video_url = mediaUrl;
+        if (postType === 'reel') {
+          contentData.media_type = 'REELS';
+        } else if (postType === 'story') {
+          contentData.media_type = 'STORIES';
+        } else {
+          // A standard video post to the feed.
+          contentData.media_type = 'VIDEO';
+        }
+      } else {
+        return { success: false, error: `Unsupported media type '${mediaFile.type}' for Instagram.` };
       }
 
-      if (!mediaUrl) {
-        return { success: false, error: 'No image URL found for Instagram post' };
-      }
-
-      console.log('📸 Attempting Instagram post with:', {
+      console.log('📸 Attempting Instagram post with payload:', {
         igAccountId,
-        hasAccessToken: !!accessToken,
-        mediaUrl: mediaUrl.substring(0, 50) + '...',
-        captionLength: caption.length
+        media_type: contentData.media_type,
+        post_type: postType
       });
 
-      const result = await instagramService.postContent(accessToken, igAccountId, { mediaUrl, caption });
-      
+      // This call assumes `instagramService.postContent` is updated to handle the new `contentData` object
+      // which can contain `image_url` or `video_url` and an optional `media_type`.
+      const result = await instagramService.postContent(accessToken, igAccountId, contentData);
+
       if (!result.success) {
-        console.error('❌ Instagram posting failed:', result.error);
-        return { 
-          success: false, 
-          error: result.error || 'Failed to post to Instagram', 
+        console.error('❌ Instagram posting failed in controller:', result.error);
+        return {
+          success: false,
+          error: result.error || 'Failed to post to Instagram',
           raw: result.raw,
           errorCode: result.errorCode,
           errorType: result.errorType,
@@ -425,12 +399,13 @@ async postToTwitter(post, user) {
       }
 
       console.log('✅ Instagram post successful:', result.id);
-      return { success: true, ig_media_id: result.id, type: 'image' };
+      return { success: true, ig_media_id: result.id, type: mediaFile.type };
+
     } catch (error) {
-      console.error('❌ Instagram posting error:', error);
+      console.error('❌ Unhandled error in postToInstagram:', error);
       const errorResponse = handlePlatformError(error, 'Instagram');
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: errorResponse.error.message,
         errorCode: errorResponse.error.code,
         requiresReconnection: true
@@ -523,6 +498,27 @@ async postToTwitter(post, user) {
             return { success: true, type: 'photo', post_id: uploadResp.data?.post_id || uploadResp.data?.id, pageId, fallback: 'binary' };
           }
 
+          // Additional fallback: try loading buffer via storage/url helpers
+          try {
+            const mediaFile = firstImage || {};
+            const loaded = await loadMediaBuffer({
+              ...mediaFile,
+              url: imageUrl,
+              filename,
+              mimeType: contentType
+            });
+            if (loaded.buffer) {
+              const form2 = new FormData();
+              form2.append('source', loaded.buffer, { filename: loaded.filename || filename, contentType: loaded.mimeType || contentType });
+              form2.append('caption', message || '');
+              form2.append('access_token', pageAccessToken);
+              const uploadResp2 = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/photos`, form2, { headers: form2.getHeaders() });
+              return { success: true, type: 'photo', post_id: uploadResp2.data?.post_id || uploadResp2.data?.id, pageId, fallback: 'binary-buffer' };
+            }
+          } catch (loadErr) {
+            console.warn('⚠️ Facebook binary buffer fallback failed:', loadErr.message);
+          }
+
           // As a last resort, fall back to feed (text-only) to avoid total failure
           const feedRespFallback = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
             params: { message, access_token: pageAccessToken }
@@ -602,11 +598,11 @@ async postToTwitter(post, user) {
     let mediaPayload = null;
     if (post.media && post.media.length > 0) {
       const mediaFile = post.media[0];
-      const mediaPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
-      if (fs.existsSync(mediaPath)) {
+      const loaded = await loadMediaBuffer(mediaFile);
+      if (loaded.buffer) {
         mediaPayload = {
-          buffer: fs.readFileSync(mediaPath), // Read file into a buffer
-          type: mediaFile.mimeType,
+          buffer: loaded.buffer,
+          type: loaded.mimeType || mediaFile.mimeType,
         };
       }
     }
@@ -1309,13 +1305,38 @@ async postToTwitter(post, user) {
       await post.save();
       await post.populate('author', 'username email');
 
-      // TODO: Add job scheduling logic here (e.g., using node-cron or Bull queue)
+      // If scheduled time is now or in the past, publish immediately instead of waiting for cron
+      if (scheduledDate <= new Date()) {
+        try {
+          const user = await User.findById(req.userId);
+          if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+          }
+          const result = await retryPost(async () => {
+            return await this.executePlatformPost(post, user);
+          }, post.platform, post);
+          await updatePostWithRetryInfo(post, result);
+
+          return res.status(201).json({
+            success: result.success,
+            message: result.success ? 'Post published successfully' : `Failed to publish: ${result.error}`,
+            post,
+            platformResult: result,
+            publishedImmediately: true
+          });
+        } catch (immediateErr) {
+          console.error('❌ Immediate publish after scheduling failed:', immediateErr);
+          // Fall through: return scheduled response; cron will retry
+        }
+      }
+
       console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledDate.toISOString());
 
       res.status(201).json({
         success: true,
         message: 'Post scheduled successfully',
-        post
+        post,
+        publishedImmediately: false
       });
 
     } catch (error) {
@@ -1485,12 +1506,38 @@ async postToTwitter(post, user) {
       await post.save();
       await post.populate('author', 'username email');
 
+      // If scheduled time is now or in the past, publish immediately
+      if (scheduledDate <= new Date()) {
+        try {
+          const user = await User.findById(userId);
+          if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+          }
+          const result = await retryPost(async () => {
+            return await this.executePlatformPost(post, user);
+          }, post.platform, post);
+          await updatePostWithRetryInfo(post, result);
+
+          return res.json({
+            success: result.success,
+            message: result.success ? 'Post published successfully' : `Failed to publish: ${result.error}`,
+            post,
+            platformResult: result,
+            publishedImmediately: true
+          });
+        } catch (immediateErr) {
+          console.error('❌ Immediate publish after scheduling (by ID) failed:', immediateErr);
+          // Fall through: return scheduled response; cron will retry
+        }
+      }
+
       console.log('✅ Post scheduled successfully:', post._id, 'for:', scheduledDate.toISOString());
 
       res.json({
         success: true,
         message: 'Post scheduled successfully',
-        post
+        post,
+        publishedImmediately: false
       });
 
     } catch (error) {
@@ -1610,6 +1657,49 @@ async postToTwitter(post, user) {
       });
     }
   }
+}
+
+// Helper: load media into a Buffer regardless of storage backend
+async function loadMediaBuffer(mediaFile) {
+  try {
+    // Prefer GCS when available
+    if (mediaFile.storage === 'gcs' && mediaFile.storageKey) {
+      const buffer = await downloadToBufferFromGcs(mediaFile.storageKey);
+      if (buffer && buffer.length > 0) {
+        return { buffer, filename: mediaFile.filename, mimeType: mediaFile.mimeType };
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ GCS fetch failed for media, falling back to local/url', { err: e.message, storageKey: mediaFile.storageKey });
+  }
+
+  // Try local filesystem
+  try {
+    const localPath = path.join(__dirname, '..', '..', 'uploads', mediaFile.filename);
+    if (fs.existsSync(localPath)) {
+      const buffer = fs.readFileSync(localPath);
+      if (buffer && buffer.length > 0) {
+        return { buffer, filename: mediaFile.filename, mimeType: mediaFile.mimeType };
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ Local file read failed for media', { err: e.message, filename: mediaFile.filename });
+  }
+
+  // Fallback to HTTP(S) download from URL
+  try {
+    if (mediaFile.url) {
+      const resp = await axios.get(mediaFile.url, { responseType: 'arraybuffer' });
+      const buffer = Buffer.from(resp.data);
+      if (buffer && buffer.length > 0) {
+        return { buffer, filename: mediaFile.filename || 'media', mimeType: mediaFile.mimeType || resp.headers['content-type'] || 'application/octet-stream' };
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ HTTP download failed for media URL', { err: e.message, url: mediaFile.url });
+  }
+
+  return { buffer: null, filename: mediaFile.filename, mimeType: mediaFile.mimeType };
 }
 
 module.exports = new PostController();

@@ -87,3 +87,4 @@ checkGoogleOAuthConfig().catch(error => {
   console.error('💥 Error checking Google OAuth configuration:', error);
   process.exit(1);
 });
+

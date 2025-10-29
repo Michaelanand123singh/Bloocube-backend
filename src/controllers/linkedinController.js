@@ -30,8 +30,16 @@ class LinkedInController {
         });
       }
 
-      // Get user ID from authenticated request (optional for OAuth initiation)
-      const userId = req.userId || req.user?._id || req.user?.id || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Get user ID from authenticated request
+      // Make sure your auth middleware sets either req.userId or req.user
+      const userId = req.userId || req.user?._id || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          error: 'User not authenticated' 
+        });
+      }
 
       // Create state with user ID for verification
       // Include redirectUri in state to retrieve it later
