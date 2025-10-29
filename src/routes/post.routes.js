@@ -36,8 +36,8 @@ const postValidation = [
     .isIn(['twitter', 'youtube', 'instagram', 'linkedin', 'facebook'])
     .withMessage('Platform must be one of: twitter, youtube, instagram, linkedin, facebook'),
   body('post_type')
-    .isIn(['post', 'story', 'reel', 'video', 'short', 'live', 'carousel', 'poll', 'tweet', 'thread'])
-    .withMessage('Post type must be one of: post, story, reel, video, short, live, carousel, poll, tweet, thread'),
+    .isIn(['post', 'story', 'reel', 'video', 'short', 'live', 'carousel', 'poll', 'tweet', 'thread', 'article'])
+    .withMessage('Post type must be one of: post, story, reel, video, short, live, carousel, poll, tweet, thread, article'),
   body('status')
     .optional()
     .isIn(['draft', 'scheduled', 'published'])

@@ -32,12 +32,13 @@ const generateAuthURL = asyncHandler(async (req, res) => {
     };
     const state = jwt.sign(statePayload, config.JWT_SECRET, { expiresIn: '10m' });
     
-    const scope = 'email,public_profile,pages_manage_posts,pages_read_engagement,pages_show_list';
+    const scope = 'email,public_profile,pages_manage_posts,pages_read_engagement,pages_show_list,pages_manage_metadata';
     
     const authURL = `https://www.facebook.com/v18.0/dialog/oauth?` +
       `client_id=${FACEBOOK_CLIENT_ID}&` +
       `redirect_uri=${encodeURIComponent(redirectUri || FACEBOOK_REDIRECT_URI)}&` +
       `scope=${encodeURIComponent(scope)}&` +
+      `auth_type=rerequest&` +
       `state=${state}&` +
       `response_type=code`;
 
@@ -306,10 +307,78 @@ const validateConnection = asyncHandler(async (req, res) => {
   }
 });
 
+// Set default Page ID for posting
+const setDefaultPage = asyncHandler(async (req, res) => {
+  const userId = req.userId;
+  const { pageId } = req.body || {};
+
+  if (!pageId) {
+    return res.status(400).json({ success: false, error: 'pageId is required' });
+  }
+
+  const user = await User.findById(userId);
+  if (!user || !user.socialAccounts?.facebook?.accessToken) {
+    return res.status(400).json({ success: false, error: 'Facebook not connected' });
+  }
+
+  // Verify the user token can access this page and get a page token
+  try {
+    const resp = await axios.get(`https://graph.facebook.com/v18.0/${pageId}`, {
+      params: { access_token: user.socialAccounts.facebook.accessToken, fields: 'id,name,access_token' }
+    });
+    if (!resp.data?.id) {
+      return res.status(400).json({ success: false, error: 'Page not accessible by this user' });
+    }
+  } catch (e) {
+    return res.status(400).json({ success: false, error: e.response?.data?.error?.message || 'Failed to verify page access' });
+  }
+
+  user.socialAccounts.facebook.defaultPageId = pageId;
+  await user.save();
+
+  return res.json({ success: true, message: 'Default Facebook page set', pageId });
+});
+
 module.exports = {
   generateAuthURL,
   handleCallback,
   getProfile,
   disconnect,
-  validateConnection
+  validateConnection,
+  setDefaultPage,
+  // NEW: list pages helper for debugging/selection
+  getPages: asyncHandler(async (req, res) => {
+    const userId = req.userId;
+    try {
+      const user = await User.findById(userId).select('socialAccounts.facebook');
+      if (!user || !user.socialAccounts?.facebook?.accessToken) {
+        return res.status(400).json({ success: false, error: 'Facebook not connected' });
+      }
+
+      const token = user.socialAccounts.facebook.accessToken;
+      // Fetch granted permissions (to verify the scopes)
+      let permissions = [];
+      try {
+        const permsResp = await axios.get('https://graph.facebook.com/v18.0/me/permissions', {
+          params: { access_token: token }
+        });
+        permissions = permsResp.data?.data || [];
+      } catch (e) {}
+
+      const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
+        params: { access_token: token, fields: 'id,name,access_token' }
+      });
+      const pages = pagesResp.data?.data || [];
+
+      return res.json({
+        success: true,
+        count: pages.length,
+        pages,
+        permissions
+      });
+    } catch (error) {
+      console.error('❌ Facebook getPages error:', error.response?.data || error.message);
+      return res.status(500).json({ success: false, error: error.response?.data?.error?.message || error.message });
+    }
+  })
 };

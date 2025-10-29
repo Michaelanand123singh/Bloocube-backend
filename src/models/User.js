@@ -213,7 +213,8 @@ const userSchema = new mongoose.Schema({
       accessToken: String,
       refreshToken: String,
       expiresAt: Date,
-      connectedAt: Date
+      connectedAt: Date,
+      defaultPageId: String
     },
     linkedin: {
       id: String,

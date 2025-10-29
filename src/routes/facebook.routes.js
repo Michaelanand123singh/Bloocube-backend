@@ -11,6 +11,8 @@ router.get('/callback', facebookController.handleCallback);
 router.get('/profile', authenticate, facebookController.getProfile);
 router.post('/disconnect', authenticate, facebookController.disconnect);
 router.get('/validate', authenticate, facebookController.validateConnection);
+router.get('/pages', authenticate, facebookController.getPages);
+router.post('/default-page', authenticate, facebookController.setDefaultPage);
 
 // Facebook content posting is handled by the main postController
 // router.post('/post', authenticate, facebookController.postContent);

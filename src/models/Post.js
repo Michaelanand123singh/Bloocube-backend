@@ -5,7 +5,7 @@ const validPostTypes = {
   twitter: ['tweet', 'thread', 'poll'],
   youtube: ['video', 'short', 'live', 'post'],
   instagram: ['post', 'story', 'reel', 'carousel'],
-  linkedin: ['post', 'video', 'poll'],
+  linkedin: ['post', 'video', 'poll', 'article'],
   facebook: ['post', 'story', 'reel', 'video', 'live', 'carousel']
 };
 

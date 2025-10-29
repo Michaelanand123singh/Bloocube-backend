@@ -145,19 +145,45 @@ async postToTwitter(post, user) {
       }
     }
 
-    // Prepare tweet data
-    const tweetData = { text: post.content?.caption || post.title || ' ' };
-    if (mediaIds.length > 0) {
-      tweetData.media = { media_ids: mediaIds };
+    // Handle thread vs single tweet
+    if (post.post_type === 'thread') {
+      const threadEntries = post.platformContent?.twitter?.thread || post.platform_content?.twitter?.thread;
+      if (!Array.isArray(threadEntries) || threadEntries.length === 0) {
+        return { success: false, error: 'No thread content provided' };
+      }
+
+      // First tweet (attach media if any)
+      const firstText = String(threadEntries[0]?.text || '').trim() || (post.content?.caption || post.title || ' ');
+      const firstTweet = { text: firstText };
+      if (mediaIds.length > 0) firstTweet.media = { media_ids: mediaIds };
+      const firstRes = await client.v2.tweet(firstTweet);
+      let prevId = firstRes?.data?.id;
+      const results = [{ tweet_id: prevId, text: firstRes?.data?.text, position: 1 }];
+
+      // Subsequent tweets as replies
+      for (let i = 1; i < threadEntries.length; i++) {
+        const txt = String(threadEntries[i]?.text || '').trim();
+        if (!txt) continue;
+        const res = await client.v2.tweet({ text: txt, reply: { in_reply_to_tweet_id: prevId } });
+        prevId = res?.data?.id;
+        results.push({ tweet_id: prevId, text: res?.data?.text, position: i + 1 });
+        // Small delay to avoid rate issues
+        await new Promise(r => setTimeout(r, 800));
+      }
+
+      return { success: true, thread_id: results[0]?.tweet_id, tweets: results, total_tweets: results.length };
+    } else {
+      // Single tweet
+      const tweetData = { text: post.content?.caption || post.title || ' ' };
+      if (mediaIds.length > 0) {
+        tweetData.media = { media_ids: mediaIds };
+      }
+
+      console.log('🚀 Posting tweet with data:', tweetData);
+      const result = await client.v2.tweet(tweetData);
+      console.log('🏁 Final result from Twitter:', result);
+      return { success: true, tweet_id: result.data.id, text: result.data.text };
     }
-
-    console.log('🚀 Posting tweet with data:', tweetData);
-
-    // ✅ FIX: Use the client to post the tweet using API v2
-    const result = await client.v2.tweet(tweetData);
-
-    console.log('🏁 Final result from Twitter:', result);
-    return { success: true, tweet_id: result.data.id, text: result.data.text };
 
     } catch (error) {
       console.error('❌ CRITICAL ERROR in postToTwitter:', error);
@@ -421,17 +447,86 @@ async postToTwitter(post, user) {
         return { success: false, error: 'Facebook account not connected' };
       }
 
+      // Facebook Graph API does not support publishing Page stories via API,
+      // and events require separate permissions and flows. Prevent accidental
+      // fallback to a regular post when user selected an unsupported type.
+      if (post.post_type && post.post_type !== 'post') {
+        return {
+          success: false,
+          error: `Facebook '${post.post_type}' is not supported by this API. Please select 'post'.`
+        };
+      }
+
+      // Pre-check granted permissions to provide actionable error if missing
+      try {
+        const permsResp = await axios.get('https://graph.facebook.com/v18.0/me/permissions', {
+          params: { access_token: fb.accessToken }
+        });
+        const permsArr = permsResp.data?.data || [];
+        console.log('🔎 Facebook granted permissions:', permsArr);
+        const granted = new Map(permsArr.map(p => [p.permission, p.status]));
+        const required = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
+        const missing = required.filter(p => granted.get(p) !== 'granted');
+        if (missing.length > 0) {
+          return { success: false, error: `Missing Facebook permissions: ${missing.join(', ')}. Reconnect Facebook and approve these scopes.` };
+        }
+      } catch (permErr) {
+        console.warn('⚠️ Failed to fetch Facebook permissions:', permErr.message);
+      }
+
       // 1) Get user pages and select a page
       const pagesResp = await axios.get('https://graph.facebook.com/v18.0/me/accounts', {
         params: { access_token: fb.accessToken, fields: 'id,name,access_token' }
       });
-      const pages = pagesResp.data?.data || [];
+      const pagesDataRaw = pagesResp.data;
+      const pages = pagesDataRaw?.data || [];
+      console.log('📄 Facebook /me/accounts response:', pagesDataRaw);
+      // Allow explicit pageId via platformContent override or user's defaultPageId
+      const preferredPageId = post.platformContent?.facebook?.pageId || user.socialAccounts?.facebook?.defaultPageId;
       if (pages.length === 0) {
-        return { success: false, error: 'No Facebook Pages found for this user' };
+        // Fallback: if caller provided a pageId, try to fetch its page access token directly
+        if (preferredPageId) {
+          try {
+            const directPageResp = await axios.get(`https://graph.facebook.com/v18.0/${preferredPageId}`, {
+              params: { access_token: fb.accessToken, fields: 'id,name,access_token' }
+            });
+            const pageInfo = directPageResp.data;
+            if (pageInfo?.id && pageInfo?.access_token) {
+              console.log('✅ Fallback: obtained page token directly for page:', pageInfo);
+              const cDP = post.content || {};
+              const captionDP = typeof cDP.caption === 'string' ? cDP.caption.trim() : '';
+              const toArrayDP = (val) => Array.isArray(val) ? val : (typeof val === 'string' ? val.split(/[ ,]+/).filter(Boolean) : []);
+              const hashtagsDP = toArrayDP(cDP.hashtags).map((h) => h.startsWith('#') ? h : `#${h}`);
+              const linkDP = cDP.linkPreview ? String(cDP.linkPreview).trim() : '';
+              const partsDP = [];
+              if (captionDP) partsDP.push(captionDP);
+              if (hashtagsDP.length) partsDP.push(hashtagsDP.join(' '));
+              const message = partsDP.join('\n\n').trim();
+              let imageUrl = post.platformContent?.facebook?.imageUrl;
+              if (!imageUrl && Array.isArray(post.media) && post.media.length > 0) {
+                const firstImage = post.media.find(m => m.type === 'image');
+                if (firstImage?.url) imageUrl = this.getAbsoluteMediaUrl(firstImage.url);
+              }
+              if (imageUrl) {
+                const photoResp = await axios.post(`https://graph.facebook.com/v18.0/${preferredPageId}/photos`, null, {
+                  params: { url: imageUrl, caption: message, access_token: pageInfo.access_token }
+                });
+                return { success: true, type: 'photo', post_id: photoResp.data?.post_id || photoResp.data?.id, pageId: preferredPageId, fallback: 'direct-page-token' };
+              }
+              const feedParamsDP = { message, access_token: pageInfo.access_token };
+              if (linkDP) feedParamsDP.link = linkDP;
+              const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${preferredPageId}/feed`, null, {
+                params: feedParamsDP
+              });
+              return { success: true, type: 'feed', post_id: feedResp.data?.id, pageId: preferredPageId, fallback: 'direct-page-token' };
+            }
+          } catch (directErr) {
+            console.warn('⚠️ Direct page token fallback failed:', directErr.response?.data || directErr.message);
+          }
+        }
+        return { success: false, error: 'No Facebook Pages found for this user (ensure you are Page admin and granted pages_* permissions to the app).' };
       }
 
-      // Allow explicit pageId via platformContent override
-      const preferredPageId = post.platformContent?.facebook?.pageId;
       const page = preferredPageId ? pages.find(p => p.id === preferredPageId) : pages[0];
       if (!page) {
         return { success: false, error: 'Specified Facebook Page not found for this user' };
@@ -440,12 +535,73 @@ async postToTwitter(post, user) {
       const pageAccessToken = page.access_token;
       const pageId = page.id;
 
-      const message = post.content?.caption || post.title || '';
+      // Build message: caption then hashtags at the end. Link is posted directly via 'link' param (not inside message)
+      const c = post.content || {};
+      const caption = typeof c.caption === 'string' ? c.caption.trim() : '';
+      const toArray = (val) => Array.isArray(val) ? val : (typeof val === 'string' ? val.split(/[ ,]+/).filter(Boolean) : []);
+      const hashtagsArr = toArray(c.hashtags).map((h) => h.startsWith('#') ? h : `#${h}`);
+      const linkStr = c.linkPreview ? String(c.linkPreview).trim() : '';
+      const parts = [];
+      if (caption) parts.push(caption);
+      if (hashtagsArr.length) parts.push(hashtagsArr.join(' '));
+      const message = parts.join('\n\n').trim();
       // Select media if available
       let imageUrl = post.platformContent?.facebook?.imageUrl;
-      if (!imageUrl && Array.isArray(post.media) && post.media.length > 0) {
-        const firstImage = post.media.find(m => m.type === 'image');
-        if (firstImage?.url) imageUrl = this.getAbsoluteMediaUrl(firstImage.url);
+      let videoUrl = null;
+      let firstImage = null;
+      let firstVideo = null;
+      if (Array.isArray(post.media) && post.media.length > 0) {
+        firstImage = post.media.find(m => m.type === 'image');
+        firstVideo = post.media.find(m => m.type === 'video');
+        if (!imageUrl && firstImage?.url) imageUrl = this.getAbsoluteMediaUrl(firstImage.url);
+        if (firstVideo?.url) videoUrl = this.getAbsoluteMediaUrl(firstVideo.url);
+      }
+
+      // If video present, prefer video upload
+      if (videoUrl) {
+        try {
+          // Simple file_url upload
+          const videoResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/videos`, null, {
+            params: { file_url: videoUrl, description: message, access_token: pageAccessToken }
+          });
+          return { success: true, type: 'video', post_id: videoResp.data?.id, pageId };
+        } catch (err) {
+          const fbErr = err.response?.data?.error;
+          // Binary fallback
+          let localFilePath = null;
+          let filename = 'video.mp4';
+          let contentType = 'video/mp4';
+          if (firstVideo?.filename) {
+            localFilePath = path.join(__dirname, '..', '..', 'uploads', firstVideo.filename);
+            filename = firstVideo.filename;
+            if (firstVideo.mimeType) contentType = firstVideo.mimeType;
+          }
+
+          if (!localFilePath && typeof videoUrl === 'string') {
+            const uploadsIndex = videoUrl.indexOf('/uploads/');
+            if (uploadsIndex !== -1) {
+              const relativePath = videoUrl.substring(uploadsIndex + 1);
+              localFilePath = path.join(__dirname, '..', '..', relativePath);
+              filename = path.basename(localFilePath);
+            }
+          }
+
+          if (localFilePath && fs.existsSync(localFilePath)) {
+            const buffer = fs.readFileSync(localFilePath);
+            const form = new FormData();
+            form.append('source', buffer, { filename, contentType });
+            form.append('description', message || '');
+            form.append('access_token', pageAccessToken);
+            const uploadResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/videos`, form, { headers: form.getHeaders() });
+            return { success: true, type: 'video', post_id: uploadResp.data?.id, pageId, fallback: 'binary' };
+          }
+
+          // As a last resort, fall back to feed text-only
+          const feedParamsVideo = { message, access_token: pageAccessToken };
+          if (linkStr) feedParamsVideo.link = linkStr;
+          const feedRespVideo = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, { params: feedParamsVideo });
+          return { success: true, type: 'feed', post_id: feedRespVideo.data?.id, pageId, fallback: 'video-to-text' };
+        }
       }
 
       if (imageUrl) {
@@ -520,15 +676,19 @@ async postToTwitter(post, user) {
           }
 
           // As a last resort, fall back to feed (text-only) to avoid total failure
+          const feedParams = { message, access_token: pageAccessToken };
+          if (linkStr) feedParams.link = linkStr;
           const feedRespFallback = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
-            params: { message, access_token: pageAccessToken }
+            params: feedParams
           });
           return { success: true, type: 'feed', post_id: feedRespFallback.data?.id, pageId, fallback: 'text_only' };
         }
       }
 
+      const feedParams = { message, access_token: pageAccessToken };
+      if (linkStr) feedParams.link = linkStr;
       const feedResp = await axios.post(`https://graph.facebook.com/v18.0/${pageId}/feed`, null, {
-        params: { message, access_token: pageAccessToken }
+        params: feedParams
       });
       return { success: true, type: 'feed', post_id: feedResp.data?.id, pageId };
     } catch (error) {
@@ -586,8 +746,21 @@ async postToTwitter(post, user) {
         }
       }
 
-      // Get content for LinkedIn post
-      const content = post.content?.caption || post.title || 'Shared via Bloocube';
+      // Build LinkedIn text: caption + link (if any) + hashtags at the end
+      const cLi = post.content || {};
+      const captionLi = typeof cLi.caption === 'string' ? cLi.caption.trim() : (post.title || 'Shared via Bloocube');
+      const toArrayLi = (val) => Array.isArray(val) ? val : (typeof val === 'string' ? val.split(/[ ,]+/).filter(Boolean) : []);
+      const hashtagsLi = toArrayLi(cLi.hashtags).map((h) => h.startsWith('#') ? h : `#${h}`);
+      const linkLi = cLi.linkPreview ? String(cLi.linkPreview).trim() : '';
+      const partsLi = [];
+      // Include title first for LinkedIn articles
+      if (post.post_type === 'article' && typeof post.title === 'string' && post.title.trim().length > 0) {
+        partsLi.push(post.title.trim());
+      }
+      if (captionLi) partsLi.push(captionLi);
+      if (linkLi) partsLi.push(linkLi);
+      if (hashtagsLi.length) partsLi.push(hashtagsLi.join(' '));
+      const content = partsLi.join('\n\n').trim();
       const linkedinContent = post.platformContent?.linkedin || {};
 
       console.log('💼 Posting to LinkedIn:', {
@@ -609,7 +782,7 @@ async postToTwitter(post, user) {
 
       // Prepare LinkedIn post payload
       const payload = {
-        text: post.content?.caption || post.title || ' ',
+        text: content || ' ',
         authorId: authorUrn,
         media: mediaPayload, // Pass the media object with the buffer
       };

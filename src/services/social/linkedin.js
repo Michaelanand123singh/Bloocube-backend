@@ -111,14 +111,14 @@ class LinkedInService {
     }
   }
 
-  // ✅ NEW: Step 1 - Register the image upload
-  async registerUpload(accessToken, authorId) {
+  // ✅ NEW: Step 1 - Register the upload (image/video)
+  async registerUpload(accessToken, authorId, isVideo = false) {
     try {
       const response = await axios.post(
         `${this.apiBase}/assets?action=registerUpload`,
         {
           registerUploadRequest: {
-            recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+            recipes: [isVideo ? 'urn:li:digitalmediaRecipe:feedshare-video' : 'urn:li:digitalmediaRecipe:feedshare-image'],
             owner: authorId,
             serviceRelationships: [
               {
@@ -154,6 +154,19 @@ class LinkedInService {
     }
   }
 
+  // ✅ NEW: Upload the video binary (same PUT flow)
+  async uploadVideo(uploadUrl, videoBuffer) {
+    try {
+      await axios.put(uploadUrl, videoBuffer, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('❌ LinkedIn Video Upload Error:', error.response?.data);
+      return { success: false, error: 'Failed to upload video binary' };
+    }
+  }
+
   // ✅ UPDATED: The main post creation function
   async post(accessToken, payload) {
     try {
@@ -166,16 +179,19 @@ class LinkedInService {
 
       // --- Media Upload Flow ---
       if (payload.media && payload.media.buffer) {
+        const isVideo = typeof payload.media.type === 'string' && payload.media.type.toLowerCase().startsWith('video');
         // 1. Register the upload
-        const registerResult = await this.registerUpload(accessToken, payload.authorId);
+        const registerResult = await this.registerUpload(accessToken, payload.authorId, isVideo);
         if (!registerResult.success) {
           throw new Error('LinkedIn upload registration failed.');
         }
 
-        // 2. Upload the image
-        const uploadResult = await this.uploadImage(registerResult.uploadUrl, payload.media.buffer);
+        // 2. Upload the binary
+        const uploadResult = isVideo
+          ? await this.uploadVideo(registerResult.uploadUrl, payload.media.buffer)
+          : await this.uploadImage(registerResult.uploadUrl, payload.media.buffer);
         if (!uploadResult.success) {
-          throw new Error('LinkedIn image binary upload failed.');
+          throw new Error(isVideo ? 'LinkedIn video binary upload failed.' : 'LinkedIn image binary upload failed.');
         }
 
         mediaAssetUrn = registerResult.assetUrn; // Save the asset URN for the post
@@ -191,7 +207,7 @@ class LinkedInService {
             shareCommentary: {
               text: payload.text,
             },
-            shareMediaCategory: mediaAssetUrn ? 'IMAGE' : 'NONE',
+            shareMediaCategory: mediaAssetUrn ? ((payload.media && String(payload.media.type || '').toLowerCase().startsWith('video')) ? 'VIDEO' : 'IMAGE') : 'NONE',
             ...(mediaAssetUrn && {
               media: [
                 {
