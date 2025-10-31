@@ -1352,6 +1352,27 @@ const fetchCompetitorData = asyncHandler(async (req, res) => {
       { useEnvironmentCredentials: true }
     );
 
+    // Guard: profile fetch failed or not implemented
+    if (profileData && profileData.error) {
+      const errText = String(profileData.error).toLowerCase();
+      if (errText.includes('not implemented') || errText.includes('missing')) {
+        return res.status(HTTP_STATUS.NOT_IMPLEMENTED).json({
+          success: false,
+          message: `Platform integration not available for ${targetPlatform}.`
+        });
+      }
+      if (errText.includes('no profile') || errText.includes('not found')) {
+        return res.status(HTTP_STATUS.NOT_FOUND).json({
+          success: false,
+          message: `No user found on ${targetPlatform}.`
+        });
+      }
+      return res.status(HTTP_STATUS.BAD_GATEWAY).json({
+        success: false,
+        message: `Failed to fetch ${targetPlatform} profile: ${profileData.error}`
+      });
+    }
+
     // Fetch recent content (limited for preview)
     // For YouTube, we need to use the channel ID from the profile data
     const contentUsername = targetPlatform === 'youtube' && profileData.id ? profileData.id : username;
@@ -1361,6 +1382,14 @@ const fetchCompetitorData = asyncHandler(async (req, res) => {
       contentUsername, 
       { maxPosts: 10, timePeriodDays: 7 }
     );
+
+    // Guard: content fetch failed (e.g., method missing or API error)
+    if (contentData && contentData.error) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        message: `Unable to fetch ${targetPlatform} posts: ${contentData.error}`
+      });
+    }
 
     // Calculate basic engagement metrics
     const engagementData = competitorDataCollector.calculateEngagementMetrics(contentData);
@@ -1394,6 +1423,15 @@ const fetchCompetitorData = asyncHandler(async (req, res) => {
       username,
       dataQuality: previewData.dataQuality.level
     });
+
+    // If profile lacks key fields AND no posts were fetched, return not found/insufficient data
+    const noProfileCore = !profileData || (!profileData.id && !profileData.username && !profileData.followers && !profileData.subscribers);
+    if (noProfileCore && (previewData.content.totalPosts || 0) === 0) {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        message: `No data available for ${targetPlatform}. The user may be private or does not exist.`
+      });
+    }
 
     res.status(HTTP_STATUS.OK).json({
       success: true,
