@@ -113,6 +113,10 @@ const bidSchema = new mongoose.Schema({
     contact_info: String,
     availability: String
   },
+  creator_platform_data: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
   ai_analysis: {
     compatibility_score: {
       type: Number,

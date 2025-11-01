@@ -5,6 +5,9 @@ const { validateWithJoi, userValidation } = require('../utils/validator');
 const { upload } = require('../middlewares/upload');
 const profileController = require('../controllers/profileController');
 
+// Public creator listing (for brands to discover creators)
+router.get('/creators', authenticate, profileController.listCreators);
+
 // Profile routes
 router.get('/me', authenticate, profileController.getProfile);
 router.put('/me', authenticate, validateWithJoi(userValidation.updateProfile), profileController.updateProfile);

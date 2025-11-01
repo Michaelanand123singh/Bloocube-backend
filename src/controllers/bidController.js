@@ -45,11 +45,108 @@ const createBid = asyncHandler(async (req, res) => {
     });
   }
 
-  // Create bid
+  // Fetch creator data with platform information
+  const creator = await User.findById(creatorId);
+  if (!creator) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'Creator not found'
+    });
+  }
+
+  // Validate that creator has connected all required platforms
+  const requiredPlatforms = campaign.requirements?.platforms || [];
+  const missingPlatforms = [];
+  const creatorPlatformData = {};
+  
+  requiredPlatforms.forEach(platform => {
+    const platformKey = platform.toLowerCase();
+    const socialAccount = creator.socialAccounts?.[platformKey];
+    
+    // Check if account is connected (has access token or connectedAt)
+    const isConnected = socialAccount && (
+      socialAccount.accessToken || 
+      socialAccount.oauth_accessToken || 
+      socialAccount.connectedAt ||
+      socialAccount.id
+    );
+    
+    if (!isConnected) {
+      missingPlatforms.push(platform);
+    } else {
+      // Extract platform data for connected accounts
+      const subscriberCount = socialAccount.subscriberCount || socialAccount.followerCount || '0';
+      const followerCountNum = typeof subscriberCount === 'string' 
+        ? parseInt(subscriberCount.replace(/[^0-9]/g, '')) || 0 
+        : subscriberCount || 0;
+      
+      creatorPlatformData[platformKey] = {
+        name: creator.name,
+        email: creator.email,
+        profilePicture: creator.profile?.avatar_url || socialAccount.profileImageUrl || socialAccount.thumbnails?.default?.url || '',
+        bio: creator.profile?.bio || '',
+        username: socialAccount.username || socialAccount.customUrl || socialAccount.id || '',
+        followers: followerCountNum,
+        following: socialAccount.followingCount || 0,
+        posts: socialAccount.postCount || socialAccount.videoCount || 0,
+        verified: socialAccount.verified || false,
+        profileUrl: socialAccount.profileUrl || socialAccount.customUrl || '',
+        // Platform-specific fields
+        ...(platformKey === 'youtube' && {
+          channelTitle: socialAccount.title,
+          channelId: socialAccount.id,
+          viewCount: socialAccount.viewCount,
+          subscriberCount: socialAccount.subscriberCount,
+          videoCount: socialAccount.videoCount,
+          customUrl: socialAccount.customUrl
+        }),
+        ...(platformKey === 'instagram' && {
+          igAccountId: socialAccount.igAccountId,
+          igUsername: socialAccount.username,
+          profileImageUrl: socialAccount.profileImageUrl
+        }),
+        ...(platformKey === 'twitter' && {
+          twitterId: socialAccount.id,
+          twitterUsername: socialAccount.username,
+          twitterName: socialAccount.name,
+          profileImageUrl: socialAccount.profileImageUrl
+        }),
+        ...(platformKey === 'linkedin' && {
+          linkedinId: socialAccount.id,
+          linkedinUsername: socialAccount.username
+        }),
+        ...(platformKey === 'facebook' && {
+          facebookId: socialAccount.id,
+          facebookUsername: socialAccount.username,
+          defaultPageId: socialAccount.defaultPageId
+        })
+      };
+    }
+  });
+
+  // Reject bid if creator hasn't connected required platforms
+  if (missingPlatforms.length > 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: `You must connect the following social media accounts before bidding: ${missingPlatforms.join(', ')}`,
+      missingPlatforms
+    });
+  }
+
+  // Reject bid if no platform data was collected
+  if (Object.keys(creatorPlatformData).length === 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Unable to collect platform data. Please ensure your social media accounts are properly connected.'
+    });
+  }
+
+  // Create bid with creator platform data
   const bid = new Bid({
     ...bidData,
     campaign_id,
-    creator_id: creatorId
+    creator_id: creatorId,
+    creator_platform_data: creatorPlatformData
   });
 
   await bid.save();

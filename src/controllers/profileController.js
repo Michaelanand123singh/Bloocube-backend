@@ -6,6 +6,34 @@ const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 
 /**
+ * List creators (public endpoint for brands to discover creators)
+ */
+const listCreators = asyncHandler(async (req, res) => {
+  const { role = 'creator', active } = req.query;
+  const filter = { role };
+  
+  // Only filter by active status if explicitly provided
+  if (active !== undefined) {
+    filter.isActive = active === 'true';
+  } else {
+    // Default to showing only active creators
+    filter.isActive = true;
+  }
+
+  // Get only public creator information (exclude sensitive data)
+  const users = await User.find(filter)
+    .select('-password -refreshTokens -email')
+    .sort({ createdAt: -1 });
+
+  logger.info('Creators listed', { count: users.length, role, active });
+
+  res.json({
+    success: true,
+    data: { users }
+  });
+});
+
+/**
  * Get current user profile
  */
 const getProfile = asyncHandler(async (req, res) => {
@@ -421,6 +449,7 @@ const calculateProfileCompleteness = (user) => {
 };
 
 module.exports = {
+  listCreators,
   getProfile,
   updateProfile,
   changePassword,
