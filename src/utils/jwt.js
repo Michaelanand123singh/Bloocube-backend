@@ -174,12 +174,13 @@ class JWTManager {
   /**
    * Generate password reset token
    * @param {String} userId - User ID
+   * @param {String} redirectTo - Where to redirect after password reset ('login' or 'settings')
    * @returns {String} Password reset token
    */
-  generatePasswordResetToken(userId) {
+  generatePasswordResetToken(userId, redirectTo = 'login') {
     try {
       return jwt.sign(
-        { id: userId, type: 'password_reset' },
+        { id: userId, type: 'password_reset', redirectTo },
         this.secret,
         { expiresIn: '1h' }
       );

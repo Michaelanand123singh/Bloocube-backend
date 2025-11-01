@@ -98,8 +98,36 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "backend", timestamp: Date.now() });
 });
 
-// Serve uploaded files statically
-app.use('/uploads', express.static('uploads'));
+// Serve uploaded files statically with CORS headers
+app.use('/uploads', (req, res, next) => {
+  // Set CORS headers for static file requests (images, etc.)
+  const origin = req.headers.origin;
+  
+  // Allow all origins for static file requests, or match allowed origins
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range');
+    res.header('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+  } else {
+    // For other origins, still allow but with credentials false
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+}, express.static('uploads', {
+  setHeaders: (res, path) => {
+    // Set cache headers for images
+    if (path.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+    }
+  }
+}));
 
 // CORS test endpoint
 app.get("/cors-test", (req, res) => {

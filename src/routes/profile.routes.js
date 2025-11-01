@@ -15,6 +15,7 @@ router.post('/change-password', authenticate, validateWithJoi(userValidation.cha
 
 // Avatar management
 router.post('/avatar', authenticate, upload.single('avatar'), profileController.uploadAvatar);
+router.delete('/avatar', authenticate, profileController.removeAvatar);
 
 // Account management
 router.delete('/account', authenticate, validateWithJoi(userValidation.deleteAccount), profileController.deleteAccount);

@@ -42,34 +42,38 @@ const userValidation = {
   }),
 
   updateProfile: Joi.object({
-    name: commonSchemas.name.optional(),
+    name: Joi.string().min(2).max(100).trim().optional().empty('').allow(''),
     email: commonSchemas.email.optional(),
     profile: Joi.object({
-      bio: Joi.string().max(500).optional(),
-      avatar_url: Joi.string().uri().optional(),
-      phone: commonSchemas.phone.optional(),
-      location: Joi.string().max(100).optional(),
-      website: Joi.string().uri().optional(),
-      dateOfBirth: Joi.date().max('now').optional(),
-      gender: Joi.string().valid('male', 'female', 'other', 'prefer_not_to_say').optional(),
-      language: Joi.string().length(2).optional(),
-      timezone: Joi.string().optional(),
+      bio: Joi.string().max(500).optional().empty('').allow('', null),
+      avatar_url: Joi.string().uri().optional().empty('').allow('', null),
+      phone: Joi.string().pattern(/^[\+]?[1-9][\d]{0,15}$/).optional().empty('').allow('', null),
+      location: Joi.string().max(100).optional().empty('').allow('', null),
+      website: Joi.string().uri().allow('').optional().empty('').allow('', null),
+      dateOfBirth: Joi.alternatives().try(
+        Joi.date().max('now'),
+        Joi.string().allow('', null),
+        Joi.valid(null)
+      ).optional().allow(null),
+      gender: Joi.string().valid('male', 'female', 'other', 'prefer_not_to_say').optional().empty('').allow('', null),
+      language: Joi.string().length(2).optional().empty('').allow('', null),
+      timezone: Joi.string().optional().empty('').allow('', null),
       social_links: Joi.object({
-        youtube: Joi.string().uri().optional(),
-        instagram: Joi.string().uri().optional(),
-        twitter: Joi.string().uri().optional(),
-        linkedin: Joi.string().uri().optional(),
-        facebook: Joi.string().uri().optional(),
-        tiktok: Joi.string().uri().optional(),
-        snapchat: Joi.string().uri().optional(),
-        website: Joi.string().uri().optional()
+        youtube: Joi.string().uri().optional().empty('').allow(''),
+        instagram: Joi.string().uri().optional().empty('').allow(''),
+        twitter: Joi.string().uri().optional().empty('').allow(''),
+        linkedin: Joi.string().uri().optional().empty('').allow(''),
+        facebook: Joi.string().uri().optional().empty('').allow(''),
+        tiktok: Joi.string().uri().optional().empty('').allow(''),
+        snapchat: Joi.string().uri().optional().empty('').allow(''),
+        website: Joi.string().uri().optional().empty('').allow('')
       }).optional(),
       preferences: Joi.object({
         emailNotifications: Joi.boolean().optional(),
         pushNotifications: Joi.boolean().optional(),
         smsNotifications: Joi.boolean().optional(),
         marketingEmails: Joi.boolean().optional(),
-        profileVisibility: Joi.string().valid('public', 'private', 'followers_only').optional()
+        profileVisibility: Joi.string().valid('public', 'private', 'followers_only').optional().empty('').allow('', null)
       }).optional()
     }).optional()
   }).min(1),
@@ -270,12 +274,53 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
+// Helper function to process update data - convert empty strings to null for optional fields
+const processUpdateData = (data) => {
+  if (!data || typeof data !== 'object') return data;
+  
+  const processed = { ...data };
+  
+  // Process profile object if it exists
+  if (processed.profile && typeof processed.profile === 'object') {
+    processed.profile = { ...processed.profile };
+    
+    // Fields that can be empty strings - convert to null
+    const optionalStringFields = ['bio', 'location', 'website', 'language', 'timezone', 'phone', 'avatar_url'];
+    optionalStringFields.forEach(field => {
+      if (processed.profile[field] === '') {
+        processed.profile[field] = null;
+      }
+    });
+    
+    // Handle dateOfBirth - convert empty string to null
+    if (processed.profile.dateOfBirth === '' || processed.profile.dateOfBirth === 'null') {
+      processed.profile.dateOfBirth = null;
+    }
+    
+    // Handle gender - convert empty string to null
+    if (processed.profile.gender === '') {
+      processed.profile.gender = null;
+    }
+    
+    // Handle profileVisibility
+    if (processed.profile.preferences && processed.profile.preferences.profileVisibility === '') {
+      processed.profile.preferences.profileVisibility = null;
+    }
+  }
+  
+  return processed;
+};
+
 // Joi validation middleware
 const validateWithJoi = (schema, property = 'body') => {
   return (req, res, next) => {
-    const { error, value } = schema.validate(req[property], { 
+    // Pre-process the data: convert empty strings to null for optional fields
+    const processedData = processUpdateData(req[property]);
+    
+    const { error, value } = schema.validate(processedData, { 
       abortEarly: false,
-      stripUnknown: true 
+      stripUnknown: true,
+      convert: true
     });
     
     if (error) {

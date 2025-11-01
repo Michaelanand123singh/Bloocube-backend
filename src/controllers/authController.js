@@ -227,7 +227,15 @@ const emailService = require('../services/notifier/email');
 // ...existing code...
 
 const requestPasswordReset = asyncHandler(async (req, res) => {
-  const { email } = req.body;
+  const { email, fromSettings } = req.body;
+  
+  // Detect if user is authenticated (from settings page) or not (from login page)
+  const isAuthenticated = !!req.userId || fromSettings === true;
+  
+  // Determine redirect destination:
+  // - If authenticated (from settings): redirect to settings page
+  // - If not authenticated (from login): redirect to login page
+  const redirectTo = isAuthenticated ? 'settings' : 'login';
 
   const user = await User.findByEmail(email);
   if (!user) {
@@ -238,14 +246,40 @@ const requestPasswordReset = asyncHandler(async (req, res) => {
     });
   }
 
-  // Generate password reset token
-  const resetToken = jwtManager.generatePasswordResetToken(user._id);
+  // If user is authenticated, verify the email matches the logged-in user
+  if (isAuthenticated && req.userId && req.userId !== user._id.toString()) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      message: 'You can only request a password reset for your own account'
+    });
+  }
+
+  // Generate password reset token with redirect info
+  const resetToken = jwtManager.generatePasswordResetToken(user._id, redirectTo);
+
+  // Get frontend URL properly (not CORS_ORIGIN which is comma-separated)
+  const { getFrontendUrl } = require('../utils/urlUtils');
+  const frontendUrl = getFrontendUrl();
 
   // Send email with reset token
-  const resetUrl = `${process.env.CORS_ORIGIN || 'http://localhost:3000'}/reset-password/${resetToken}`;
+  const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+  
+  logger.info('Password reset URL generated', { 
+    frontendUrl, 
+    resetUrl, 
+    redirectTo, 
+    isAuthenticated,
+    userId: user._id,
+    email: user.email
+  });
   await emailService.sendPasswordResetEmail(user.email, resetUrl);
 
-  logger.info('Password reset requested', { userId: user._id, email: user.email });
+  logger.info('Password reset requested', { 
+    userId: user._id, 
+    email: user.email,
+    redirectTo,
+    isAuthenticated
+  });
 
   res.json({
     success: true,
@@ -260,6 +294,9 @@ const requestPasswordReset = asyncHandler(async (req, res) => {
 const resetPassword = asyncHandler(async (req, res) => {
   const { newPassword } = req.body;
   const userId = req.userId;
+  
+  // Get redirectTo from token (set by validatePasswordResetToken middleware)
+  const redirectTo = req.redirectTo || 'login';
 
   const user = await User.findById(userId);
   if (!user) {
@@ -273,11 +310,12 @@ const resetPassword = asyncHandler(async (req, res) => {
   user.password = newPassword;
   await user.save();
 
-  logger.info('Password reset successfully', { userId });
+  logger.info('Password reset successfully', { userId, redirectTo });
 
   res.json({
     success: true,
-    message: SUCCESS_MESSAGES.PASSWORD_RESET_SUCCESS
+    message: SUCCESS_MESSAGES.PASSWORD_RESET_SUCCESS,
+    redirectTo // Return redirect info to frontend
   });
 });
 

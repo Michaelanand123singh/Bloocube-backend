@@ -391,7 +391,7 @@ const refreshToken = async (req, res, next) => {
 
 /**
  * Password reset token middleware
- * Validates password reset token
+ * Validates password reset token and extracts redirectTo info
  */
 const validatePasswordResetToken = async (req, res, next) => {
   try {
@@ -416,6 +416,7 @@ const validatePasswordResetToken = async (req, res, next) => {
     
     req.user = user;
     req.userId = user._id;
+    req.redirectTo = decoded.redirectTo || 'login'; // Extract redirectTo from token, default to 'login'
     next();
   } catch (error) {
     logger.error('Password reset token validation error', error);

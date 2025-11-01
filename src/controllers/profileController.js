@@ -63,15 +63,16 @@ const updateProfile = asyncHandler(async (req, res) => {
     const profile = updateData.profile;
     
     // Basic profile info
-    if (profile.bio !== undefined) user.profile.bio = profile.bio;
-    if (profile.avatar_url !== undefined) user.profile.avatar_url = profile.avatar_url;
-    if (profile.phone !== undefined) user.profile.phone = profile.phone;
-    if (profile.location !== undefined) user.profile.location = profile.location;
-    if (profile.website !== undefined) user.profile.website = profile.website;
-    if (profile.dateOfBirth !== undefined) user.profile.dateOfBirth = profile.dateOfBirth;
-    if (profile.gender !== undefined) user.profile.gender = profile.gender;
-    if (profile.language !== undefined) user.profile.language = profile.language;
-    if (profile.timezone !== undefined) user.profile.timezone = profile.timezone;
+    // Convert empty strings to null/undefined for optional fields
+    if (profile.bio !== undefined) user.profile.bio = profile.bio === '' ? null : profile.bio;
+    if (profile.avatar_url !== undefined) user.profile.avatar_url = profile.avatar_url === '' ? null : profile.avatar_url;
+    if (profile.phone !== undefined) user.profile.phone = profile.phone === '' ? null : profile.phone;
+    if (profile.location !== undefined) user.profile.location = profile.location === '' ? null : profile.location;
+    if (profile.website !== undefined) user.profile.website = profile.website === '' ? null : profile.website;
+    if (profile.dateOfBirth !== undefined) user.profile.dateOfBirth = profile.dateOfBirth === '' || profile.dateOfBirth === null ? null : profile.dateOfBirth;
+    if (profile.gender !== undefined) user.profile.gender = profile.gender === '' || profile.gender === null ? null : profile.gender;
+    if (profile.language !== undefined) user.profile.language = profile.language === '' ? null : profile.language;
+    if (profile.timezone !== undefined) user.profile.timezone = profile.timezone === '' ? null : profile.timezone;
 
     // Social links
     if (profile.social_links) {
@@ -268,6 +269,55 @@ const uploadAvatar = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Remove avatar
+ */
+const removeAvatar = asyncHandler(async (req, res) => {
+  const userId = req.userId;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: ERROR_MESSAGES.USER_NOT_FOUND
+    });
+  }
+
+  // If user has an avatar, optionally delete the file (for local storage)
+  // For GCS, files can be left or deleted based on your cleanup strategy
+  if (user.profile.avatar_url) {
+    const path = require('path');
+    const fs = require('fs');
+    
+    // Only delete local files (not GCS URLs)
+    if (user.profile.avatar_url.includes('/uploads/avatars/')) {
+      try {
+        const filename = path.basename(user.profile.avatar_url);
+        const filePath = path.resolve('./uploads/avatars', filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          logger.info('Avatar file deleted', { userId, filePath });
+        }
+      } catch (error) {
+        // Log but don't fail if file deletion fails
+        logger.warn('Failed to delete avatar file', { userId, error: error.message });
+      }
+    }
+  }
+
+  // Remove avatar URL from user profile
+  user.profile.avatar_url = '';
+  await user.save();
+
+  logger.info('User avatar removed', { userId });
+
+  res.json({
+    success: true,
+    message: 'Avatar removed successfully',
+    data: { avatar_url: '' }
+  });
+});
+
+/**
  * Delete account
  */
 const deleteAccount = asyncHandler(async (req, res) => {
@@ -375,6 +425,7 @@ module.exports = {
   updateProfile,
   changePassword,
   uploadAvatar,
+  removeAvatar,
   deleteAccount,
   getUserStats
 };
