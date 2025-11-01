@@ -195,18 +195,76 @@ const uploadAvatar = asyncHandler(async (req, res) => {
     });
   }
 
-  // Update avatar URL (assuming file is uploaded to cloud storage)
-  const avatarUrl = req.file.path || req.file.url;
-  user.profile.avatar_url = avatarUrl;
-  await user.save();
+  // Validate file type (only images)
+  if (!req.file.mimetype.startsWith('image/')) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'Only image files are allowed for avatar'
+    });
+  }
 
-  logger.info('User avatar uploaded', { userId, avatarUrl });
+  // Process file upload
+  const { isGcsEnabled, uploadBufferToGcs } = require('../utils/storage');
+  const path = require('path');
+  const fs = require('fs');
+  const crypto = require('crypto');
+  const config = require('../config/env');
 
-  res.json({
-    success: true,
-    message: 'Avatar uploaded successfully',
-    data: { avatar_url: avatarUrl }
-  });
+  let avatarUrl;
+
+  try {
+    const originalExt = path.extname(req.file.originalname).toLowerCase();
+    const hashedName = crypto.randomBytes(16).toString('hex') + originalExt;
+
+    if (isGcsEnabled()) {
+      // Upload to Google Cloud Storage
+      const today = new Date();
+      const datePrefix = `${today.getFullYear()}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+      const gcsKey = `avatars/${datePrefix}/${hashedName}`;
+      const { url } = await uploadBufferToGcs(req.file.buffer, gcsKey, req.file.mimetype);
+      avatarUrl = url;
+    } else {
+      // Save to local storage
+      const uploadDir = path.resolve('./uploads/avatars');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const destPath = path.join(uploadDir, hashedName);
+      fs.writeFileSync(destPath, req.file.buffer);
+      
+      // Construct URL - use backend base URL if available, otherwise relative path
+      // For relative paths, frontend will prepend the API base URL
+      // Check for BASE_URL first, then PORT to construct backend URL
+      let backendBaseUrl = process.env.BASE_URL || '';
+      if (!backendBaseUrl) {
+        const port = config.PORT || process.env.PORT || 5000;
+        if (process.env.NODE_ENV === 'production') {
+          backendBaseUrl = 'https://api-backend.bloocube.com';
+        } else {
+          backendBaseUrl = `http://localhost:${port}`;
+        }
+      }
+      avatarUrl = `${backendBaseUrl}/uploads/avatars/${hashedName}`;
+    }
+
+    // Update user avatar
+    user.profile.avatar_url = avatarUrl;
+    await user.save();
+
+    logger.info('User avatar uploaded', { userId, avatarUrl });
+
+    res.json({
+      success: true,
+      message: 'Avatar uploaded successfully',
+      data: { avatar_url: avatarUrl }
+    });
+  } catch (error) {
+    logger.error('Avatar upload error', { userId, error: error.message });
+    return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Failed to upload avatar: ' + error.message
+    });
+  }
 });
 
 /**
