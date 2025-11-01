@@ -9,6 +9,7 @@ router.get('/callback', facebookController.handleCallback);
 
 // Facebook profile and connection management
 router.get('/profile', authenticate, facebookController.getProfile);
+router.get('/status', authenticate, facebookController.getStatus);
 router.post('/disconnect', authenticate, facebookController.disconnect);
 router.get('/validate', authenticate, facebookController.validateConnection);
 router.get('/pages', authenticate, facebookController.getPages);

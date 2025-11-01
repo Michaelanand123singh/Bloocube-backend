@@ -253,16 +253,53 @@ class YouTubeController {
     }
   }
 
-  // Lightweight connection status (DB-only, no API calls)
+  // Robust connection status (auto-refresh + lightweight live validation)
   async getStatus(req, res) {
     try {
       const userId = req.user.id;
       const user = await User.findById(userId).select('socialAccounts.youtube');
 
       const yt = user?.socialAccounts?.youtube;
-      const connected = !!(yt && (yt.accessToken || yt.refreshToken || yt.connectedAt));
+      if (!yt || (!yt.accessToken && !yt.refreshToken)) {
+        return res.json({ success: true, connected: false });
+      }
 
-      return res.json({ success: true, connected });
+      let accessToken = yt.accessToken;
+      const expiresAt = yt.expiresAt ? new Date(yt.expiresAt) : null;
+      const now = new Date();
+
+      // Refresh if expired or expiring within 2 minutes
+      if (!accessToken || (expiresAt && expiresAt.getTime() - now.getTime() < 2 * 60 * 1000)) {
+        if (yt.refreshToken) {
+          const refreshResult = await youtubeService.refreshToken(yt.refreshToken);
+          if (refreshResult?.success) {
+            accessToken = refreshResult.access_token;
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.youtube.accessToken': refreshResult.access_token,
+                'socialAccounts.youtube.refreshToken': refreshResult.refresh_token || yt.refreshToken,
+                'socialAccounts.youtube.expiresAt': new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000)
+              }
+            });
+          } else {
+            // Refresh failed → treat as disconnected but do not erase tokens automatically
+            return res.json({ success: true, connected: false, expired: true });
+          }
+        } else {
+          return res.json({ success: true, connected: false });
+        }
+      }
+
+      // Lightweight live validation: try fetching minimal channel info
+      try {
+        const info = await youtubeService.getChannelInfo(accessToken);
+        if (info && info.success) {
+          return res.json({ success: true, connected: true });
+        }
+        return res.json({ success: true, connected: false });
+      } catch (e) {
+        return res.json({ success: true, connected: false });
+      }
     } catch (error) {
       console.error('❌ YouTube status error:', error);
       return res.status(500).json({ success: false, error: 'Failed to get YouTube status' });

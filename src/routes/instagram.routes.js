@@ -15,6 +15,7 @@ router.use(authenticate);
 
 // Account management
 router.get('/profile', instagramController.getProfile);
+router.get('/status', instagramController.getStatus);
 router.get('/validate', instagramController.validateConnection);
 router.delete('/disconnect', instagramController.disconnect);
 // ADDED: Route for refreshing the access token

@@ -72,6 +72,52 @@ class LinkedInService {
 
   // src/services/social/linkedin.js
 
+  // Refresh access token using refresh token
+  async refreshToken(refreshToken) {
+    try {
+      console.log('🔄 Refreshing LinkedIn token...');
+      
+      if (!refreshToken) {
+        console.error('❌ No refresh token provided');
+        return { 
+          success: false, 
+          error: 'Refresh token is required' 
+        };
+      }
+
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('refresh_token', refreshToken);
+      params.append('client_id', this.clientId);
+      params.append('client_secret', this.clientSecret);
+
+      const response = await axios.post(`${this.authBase}/accessToken`, params.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+
+      console.log('✅ LinkedIn token refreshed successfully');
+      console.log('Token expires in:', response.data.expires_in, 'seconds');
+
+      return {
+        success: true,
+        access_token: response.data.access_token,
+        refresh_token: response.data.refresh_token || refreshToken, // Use existing if not provided
+        expires_in: response.data.expires_in
+      };
+    } catch (error) {
+      const detail = error.response?.data || error.message;
+      console.error('❌ LinkedIn token refresh error:', detail);
+      console.error('Status:', error.response?.status);
+      
+      return { 
+        success: false, 
+        error: detail?.error_description || detail?.error || 'Token refresh failed', 
+        raw: detail,
+        statusCode: error.response?.status
+      };
+    }
+  }
+
   async getUserProfile(accessToken) {
     try {
       console.log('🔍 Fetching LinkedIn profile with OIDC endpoint...');

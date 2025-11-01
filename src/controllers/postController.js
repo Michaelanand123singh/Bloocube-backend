@@ -287,8 +287,7 @@ async postToTwitter(post, user) {
         desiredPrivacyStatus,
         isShort,
         category,
-        hasThumbnail: !!thumbnailBuffer,
-        videoPath: videoPath
+        hasThumbnail: !!thumbnailBuffer
       });
 
       // Upload video to YouTube with all parameters

@@ -257,23 +257,42 @@ class InstagramController {
 
       const instagramAccount = user.socialAccounts.instagram;
 
-      // Live-validate token by fetching profile; if invalid, report disconnected
-      try {
-        const live = await instagramService.getProfile(
-          instagramAccount.accessToken,
-          instagramAccount.igAccountId || instagramAccount.id
-        );
-        if (!live.success) {
-          return res.json({ success: false, error: live.error || 'Instagram token invalid or expired' });
+      // Auto-refresh if token is expired or expiring soon (within 2 days)
+      const now = new Date();
+      const expiresAt = instagramAccount.tokenExpiresAt ? new Date(instagramAccount.tokenExpiresAt) : null;
+      if (expiresAt && (expiresAt.getTime() - now.getTime()) < (2 * 24 * 60 * 60 * 1000)) {
+        try {
+          const refreshed = await instagramService.refreshToken(instagramAccount.accessToken);
+          if (refreshed?.success) {
+            const newExpiry = new Date(Date.now() + (refreshed.expiresIn || 60 * 24 * 60 * 60) * 1000);
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.instagram.accessToken': refreshed.accessToken,
+                'socialAccounts.instagram.tokenExpiresAt': newExpiry,
+              }
+            });
+            instagramAccount.accessToken = refreshed.accessToken;
+          }
+        } catch (refreshErr) {
+          // proceed; validation may still succeed
         }
-      } catch (e) {
-        return res.json({ success: false, error: 'Instagram validation failed' });
+      }
+
+      // Live-validate token by fetching profile; retry once on transient failure
+      const igId = instagramAccount.igAccountId || instagramAccount.id;
+      let live = await instagramService.getProfile(instagramAccount.accessToken, igId);
+      if (!live.success) {
+        await new Promise(r => setTimeout(r, 500));
+        live = await instagramService.getProfile(instagramAccount.accessToken, igId);
+      }
+      if (!live.success) {
+        return res.json({ success: false, error: live.error || 'Instagram token invalid or expired' });
       }
 
       return res.json({
         success: true,
         profile: {
-          id: instagramAccount.igAccountId || instagramAccount.id,
+          id: igId,
           username: instagramAccount.username,
           name: instagramAccount.name,
           profileImageUrl: instagramAccount.profileImageUrl,
@@ -327,6 +346,84 @@ class InstagramController {
     } catch (error) {
       console.error('Instagram media upload error:', error);
       res.status(500).json({ success: false, error: 'Failed to upload media' });
+    }
+  }
+
+  // Get Instagram connection status (with auto-refresh)
+  async getStatus(req, res) {
+    try {
+      const userId = req.userId || req.user?._id || req.user?.id;
+      const user = await User.findById(userId).select('socialAccounts.instagram');
+      
+      const instagramAccount = user?.socialAccounts?.instagram;
+      
+      // If no Instagram account or tokens, return disconnected
+      if (!instagramAccount || !instagramAccount.accessToken) {
+        return res.json({ success: true, connected: false });
+      }
+
+      // Auto-refresh if token is expired or expiring soon (within 2 days)
+      const now = new Date();
+      const expiresAt = instagramAccount.tokenExpiresAt ? new Date(instagramAccount.tokenExpiresAt) : null;
+      if (expiresAt && (expiresAt.getTime() - now.getTime()) < (2 * 24 * 60 * 60 * 1000)) {
+        try {
+          console.log('🔄 Instagram token expired or expiring soon, refreshing...');
+          const refreshed = await instagramService.refreshToken(instagramAccount.accessToken);
+          if (refreshed?.success) {
+            const newExpiry = new Date(Date.now() + (refreshed.expiresIn || 60 * 24 * 60 * 60) * 1000);
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.instagram.accessToken': refreshed.accessToken,
+                'socialAccounts.instagram.tokenExpiresAt': newExpiry,
+              }
+            });
+            instagramAccount.accessToken = refreshed.accessToken;
+            console.log('✅ Instagram token refreshed successfully');
+          } else {
+            // Refresh failed - treat as disconnected but don't erase tokens
+            console.log('❌ Instagram token refresh failed:', refreshed?.error);
+            return res.json({ success: true, connected: false, expired: true });
+          }
+        } catch (refreshErr) {
+          console.error('Instagram refresh error:', refreshErr);
+          // Continue to validation - may still work
+        }
+      }
+
+      // Lightweight live validation: try fetching profile
+      try {
+        const igId = instagramAccount.igAccountId || instagramAccount.id;
+        let live = await instagramService.getProfile(instagramAccount.accessToken, igId);
+        if (!live.success) {
+          // Retry once
+          await new Promise(r => setTimeout(r, 500));
+          live = await instagramService.getProfile(instagramAccount.accessToken, igId);
+        }
+        if (live && live.success) {
+          return res.json({ 
+            success: true, 
+            connected: true,
+            account: {
+              id: igId,
+              username: instagramAccount.username,
+              name: instagramAccount.name,
+              connectedAt: instagramAccount.connectedAt
+            }
+          });
+        }
+        return res.json({ success: true, connected: false });
+      } catch (e) {
+        console.error('Instagram profile validation error:', e);
+        return res.json({ success: true, connected: false });
+      }
+
+    } catch (error) {
+      console.error('Error getting Instagram status:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to get Instagram status',
+        details: error.message 
+      });
     }
   }
 

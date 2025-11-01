@@ -200,7 +200,15 @@ const getProfile = asyncHandler(async (req, res) => {
         params: { access_token: facebookAccount.accessToken, fields: 'id' }
       });
     } catch (e) {
-      return res.json({ success: false, error: 'Facebook token invalid or expired' });
+      // Retry once after brief delay to reduce false negatives from transient errors
+      try {
+        await new Promise(r => setTimeout(r, 400));
+        await axios.get(`https://graph.facebook.com/v18.0/me`, {
+          params: { access_token: facebookAccount.accessToken, fields: 'id' }
+        });
+      } catch (e2) {
+        return res.json({ success: false, error: 'Facebook token invalid or expired' });
+      }
     }
     
     res.json({
@@ -264,6 +272,76 @@ const disconnect = asyncHandler(async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to disconnect Facebook account'
+    });
+  }
+});
+
+// Get Facebook connection status (with token validation)
+const getStatus = asyncHandler(async (req, res) => {
+  const userId = req.userId || req.user?._id || req.user?.id;
+
+  try {
+    const user = await User.findById(userId).select('socialAccounts.facebook');
+    
+    // Check if Facebook account exists and has required fields
+    if (!user || !user.socialAccounts?.facebook || !user.socialAccounts.facebook.id || !user.socialAccounts.facebook.accessToken) {
+      return res.json({
+        success: true,
+        connected: false
+      });
+    }
+
+    const facebookAccount = user.socialAccounts.facebook;
+    
+    // Validate token with a lightweight /me call
+    try {
+      await axios.get(`https://graph.facebook.com/v18.0/me`, {
+        params: { access_token: facebookAccount.accessToken, fields: 'id' }
+      });
+      // Token is valid - return connected
+      return res.json({
+        success: true,
+        connected: true,
+        account: {
+          id: facebookAccount.id,
+          name: facebookAccount.name,
+          username: facebookAccount.username,
+          connectedAt: facebookAccount.connectedAt
+        }
+      });
+    } catch (e) {
+      // Retry once after brief delay to reduce false negatives from transient errors
+      try {
+        await new Promise(r => setTimeout(r, 400));
+        await axios.get(`https://graph.facebook.com/v18.0/me`, {
+          params: { access_token: facebookAccount.accessToken, fields: 'id' }
+        });
+        return res.json({
+          success: true,
+          connected: true,
+          account: {
+            id: facebookAccount.id,
+            name: facebookAccount.name,
+            username: facebookAccount.username,
+            connectedAt: facebookAccount.connectedAt
+          }
+        });
+      } catch (e2) {
+        // Token invalid - but don't delete it, just report disconnected
+        console.log('Facebook token validation failed:', e2.response?.data || e2.message);
+        return res.json({ 
+          success: true, 
+          connected: false,
+          expired: true
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error getting Facebook status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get Facebook status',
+      details: error.message
     });
   }
 });
@@ -344,6 +422,7 @@ module.exports = {
   handleCallback,
   getProfile,
   disconnect,
+  getStatus,
   validateConnection,
   setDefaultPage,
   // NEW: list pages helper for debugging/selection

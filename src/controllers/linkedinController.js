@@ -333,21 +333,62 @@ class LinkedInController {
       const user = await User.findById(userId).select('socialAccounts.linkedin');
       
       const linkedinAccount = user?.socialAccounts?.linkedin;
-      const isConnected = !!linkedinAccount?.accessToken;
-      const isExpired = linkedinAccount?.expiresAt 
-        ? new Date(linkedinAccount.expiresAt) < new Date() 
-        : true;
+      
+      // If no LinkedIn account or tokens, return disconnected
+      if (!linkedinAccount || (!linkedinAccount.accessToken && !linkedinAccount.refreshToken)) {
+        return res.json({ success: true, connected: false });
+      }
 
-      res.json({ 
-        success: true,
-        connected: isConnected,
-        expired: isExpired,
-        account: isConnected ? {
-          email: linkedinAccount.email,
-          name: linkedinAccount.name,
-          connectedAt: linkedinAccount.connectedAt
-        } : null
-      });
+      let accessToken = linkedinAccount.accessToken;
+      const expiresAt = linkedinAccount.expiresAt ? new Date(linkedinAccount.expiresAt) : null;
+      const now = new Date();
+
+      // Refresh if expired or expiring within 2 minutes
+      if (!accessToken || (expiresAt && expiresAt.getTime() - now.getTime() < 2 * 60 * 1000)) {
+        if (linkedinAccount.refreshToken) {
+          console.log('🔄 LinkedIn token expired or expiring soon, refreshing...');
+          const refreshResult = await linkedinService.refreshToken(linkedinAccount.refreshToken);
+          if (refreshResult?.success) {
+            accessToken = refreshResult.access_token;
+            // Update tokens in database
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.linkedin.accessToken': refreshResult.access_token,
+                'socialAccounts.linkedin.refreshToken': refreshResult.refresh_token || linkedinAccount.refreshToken,
+                'socialAccounts.linkedin.expiresAt': new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000)
+              }
+            });
+            console.log('✅ LinkedIn token refreshed successfully');
+          } else {
+            // Refresh failed → treat as disconnected but do not erase tokens automatically
+            console.log('❌ LinkedIn token refresh failed:', refreshResult?.error);
+            return res.json({ success: true, connected: false, expired: true });
+          }
+        } else {
+          // No refresh token available
+          return res.json({ success: true, connected: false, expired: true });
+        }
+      }
+
+      // Lightweight live validation: try fetching profile info
+      try {
+        const profileResult = await linkedinService.getUserProfile(accessToken);
+        if (profileResult && profileResult.success) {
+          return res.json({ 
+            success: true, 
+            connected: true,
+            account: {
+              email: linkedinAccount.email,
+              name: linkedinAccount.name,
+              connectedAt: linkedinAccount.connectedAt
+            }
+          });
+        }
+        return res.json({ success: true, connected: false });
+      } catch (e) {
+        console.error('LinkedIn profile validation error:', e);
+        return res.json({ success: true, connected: false });
+      }
 
     } catch (error) {
       console.error('Error getting LinkedIn status:', error);
@@ -367,21 +408,69 @@ class LinkedInController {
 
   async getProfile(req, res) {
    try {
-     const userId = req.userId;
+     const userId = req.userId || req.user?._id || req.user?.id;
+     
+     if (!userId) {
+       return res.status(401).json({ 
+         success: false, 
+         error: 'User not authenticated' 
+       });
+     }
+
      const user = await User.findById(userId).select('socialAccounts.linkedin');
 
-     if (!user || !user.socialAccounts?.linkedin?.accessToken) {
+     if (!user || !user.socialAccounts?.linkedin) {
        return res.status(400).json({ success: false, error: 'LinkedIn not connected' });
      }
 
-     // Live-validate the token via LinkedIn userinfo; if invalid, report disconnected
-     const accessToken = user.socialAccounts.linkedin.accessToken;
-     const live = await linkedinService.getUserProfile(accessToken);
-     if (!live.success) {
-       return res.status(200).json({ success: false, error: live.error || 'LinkedIn token invalid or expired' });
+     const linkedinAccount = user.socialAccounts.linkedin;
+     let accessToken = linkedinAccount.accessToken;
+     const expiresAt = linkedinAccount.expiresAt ? new Date(linkedinAccount.expiresAt) : null;
+     const now = new Date();
+
+     // Check if token is expired or expiring soon and refresh if needed
+     if (!accessToken || (expiresAt && expiresAt.getTime() - now.getTime() < 2 * 60 * 1000)) {
+       if (linkedinAccount.refreshToken) {
+         console.log('🔄 LinkedIn token expired or expiring soon, refreshing before profile fetch...');
+         const refreshResult = await linkedinService.refreshToken(linkedinAccount.refreshToken);
+         if (refreshResult?.success) {
+           accessToken = refreshResult.access_token;
+           // Update tokens in database
+           await User.findByIdAndUpdate(userId, {
+             $set: {
+               'socialAccounts.linkedin.accessToken': refreshResult.access_token,
+               'socialAccounts.linkedin.refreshToken': refreshResult.refresh_token || linkedinAccount.refreshToken,
+               'socialAccounts.linkedin.expiresAt': new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000)
+             }
+           });
+           console.log('✅ LinkedIn token refreshed successfully');
+           // Update the user object for response
+           linkedinAccount.accessToken = refreshResult.access_token;
+         } else {
+           console.log('❌ LinkedIn token refresh failed:', refreshResult?.error);
+           return res.status(200).json({ 
+             success: false, 
+             error: refreshResult?.error || 'LinkedIn token invalid or expired. Please reconnect your account.' 
+           });
+         }
+       } else {
+         return res.status(200).json({ 
+           success: false, 
+           error: 'LinkedIn token expired and no refresh token available. Please reconnect your account.' 
+         });
+       }
      }
 
-     return res.json({ success: true, profile: user.socialAccounts.linkedin });
+     // Live-validate the token via LinkedIn userinfo; if invalid, report disconnected
+     const live = await linkedinService.getUserProfile(accessToken);
+     if (!live.success) {
+       return res.status(200).json({ 
+         success: false, 
+         error: live.error || 'LinkedIn token invalid or expired' 
+       });
+     }
+
+     return res.json({ success: true, profile: linkedinAccount });
 
   } catch (error) {
     console.error('Error getting LinkedIn profile:', error);
@@ -390,7 +479,7 @@ class LinkedInController {
       error: 'Failed to get LinkedIn profile'
     });
   }
-}
+  }
 }
 
 module.exports = new LinkedInController();

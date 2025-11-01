@@ -26,6 +26,7 @@ router.use(authenticate);
 
 // Account management
 router.get('/profile', twitterController.getProfile);
+router.get('/status', twitterController.getStatus);
 router.get('/validate', twitterController.validateConnection);
 router.delete('/disconnect', twitterController.disconnect);
 

@@ -438,14 +438,131 @@ async postContent(req, res) {
         return res.status(400).json({ success: false, error: 'Twitter account not connected' });
       }
 
-      res.json({ success: true, profile: user.socialAccounts.twitter });
+      // Prefer live validation via OAuth2 token when available (without posting)
+      const tw = user.socialAccounts.twitter || {};
+      let accessToken = tw.accessToken;
+      const expiresAt = tw.expiresAt ? new Date(tw.expiresAt) : null;
+      const now = new Date();
+
+      if (accessToken) {
+        // Refresh if expired or expiring soon (<=2m)
+        if (expiresAt && (expiresAt.getTime() - now.getTime() < 2 * 60 * 1000)) {
+          const refreshResult = await twitterService.refreshToken(tw.refreshToken);
+          if (refreshResult?.success) {
+            accessToken = refreshResult.access_token;
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.twitter.accessToken': refreshResult.access_token,
+                'socialAccounts.twitter.refreshToken': refreshResult.refresh_token || tw.refreshToken,
+                'socialAccounts.twitter.expiresAt': new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000)
+              }
+            });
+          } else {
+            // fall back to DB profile if refresh failed
+            return res.json({ success: false, error: 'Twitter token expired' });
+          }
+        }
+
+        // Live validate with a read-only profile fetch (no posting)
+        const profileResult = await twitterService.getUserProfile(accessToken);
+        if (profileResult?.success) {
+          return res.json({ success: true, profile: { ...tw, ...profileResult.user } });
+        }
+        return res.json({ success: false, error: profileResult?.error || 'Failed to validate Twitter profile' });
+      }
+
+      // If only OAuth1.0a tokens exist, consider connected (they do not expire)
+      if (tw.oauth_accessToken && tw.oauth_accessSecret) {
+        return res.json({ success: true, profile: tw });
+      }
+
+      return res.json({ success: false, error: 'Twitter account not connected' });
     } catch (error) {
       console.error('Twitter profile error:', error);
       res.status(500).json({ success: false, error: 'Failed to get Twitter profile' });
     }
   }
- 
 
+  // Get Twitter connection status (with auto-refresh)
+  async getStatus(req, res) {
+    try {
+      const userId = req.userId || req.user?._id || req.user?.id;
+      const user = await User.findById(userId).select('socialAccounts.twitter');
+      
+      const twitterAccount = user?.socialAccounts?.twitter;
+      
+      // If no Twitter account or tokens, return disconnected
+      if (!twitterAccount || (!twitterAccount.accessToken && !twitterAccount.oauth_accessToken)) {
+        return res.json({ success: true, connected: false });
+      }
+
+      // If OAuth 1.0a tokens exist, they don't expire - consider connected
+      if (twitterAccount.oauth_accessToken && twitterAccount.oauth_accessSecret) {
+        return res.json({ success: true, connected: true });
+      }
+
+      // For OAuth 2.0 tokens, check expiration and refresh if needed
+      let accessToken = twitterAccount.accessToken;
+      const expiresAt = twitterAccount.expiresAt ? new Date(twitterAccount.expiresAt) : null;
+      const now = new Date();
+
+      // Refresh if expired or expiring within 2 minutes
+      if (!accessToken || (expiresAt && expiresAt.getTime() - now.getTime() < 2 * 60 * 1000)) {
+        if (twitterAccount.refreshToken) {
+          console.log('🔄 Twitter token expired or expiring soon, refreshing...');
+          const refreshResult = await twitterService.refreshToken(twitterAccount.refreshToken);
+          if (refreshResult?.success) {
+            accessToken = refreshResult.access_token;
+            // Update tokens in database
+            await User.findByIdAndUpdate(userId, {
+              $set: {
+                'socialAccounts.twitter.accessToken': refreshResult.access_token,
+                'socialAccounts.twitter.refreshToken': refreshResult.refresh_token || twitterAccount.refreshToken,
+                'socialAccounts.twitter.expiresAt': new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000)
+              }
+            });
+            console.log('✅ Twitter token refreshed successfully');
+          } else {
+            // Refresh failed → treat as disconnected but do not erase tokens automatically
+            console.log('❌ Twitter token refresh failed:', refreshResult?.error);
+            return res.json({ success: true, connected: false, expired: true });
+          }
+        } else {
+          // No refresh token available
+          return res.json({ success: true, connected: false, expired: true });
+        }
+      }
+
+      // Lightweight live validation: try fetching profile info
+      try {
+        const profileResult = await twitterService.getUserProfile(accessToken);
+        if (profileResult && profileResult.success) {
+          return res.json({ 
+            success: true, 
+            connected: true,
+            account: {
+              id: twitterAccount.id,
+              username: twitterAccount.username,
+              name: twitterAccount.name,
+              connectedAt: twitterAccount.connectedAt
+            }
+          });
+        }
+        return res.json({ success: true, connected: false });
+      } catch (e) {
+        console.error('Twitter profile validation error:', e);
+        return res.json({ success: true, connected: false });
+      }
+
+    } catch (error) {
+      console.error('Error getting Twitter status:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to get Twitter status',
+        details: error.message 
+      });
+    }
+  }
 
   // Validate Twitter connection
   async validateConnection(req, res) {
