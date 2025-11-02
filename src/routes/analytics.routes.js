@@ -13,6 +13,9 @@ router.get('/user/:userId', authenticate, ctrl.getUserAnalytics);
 // Sync analytics from linked accounts
 router.post('/user/:userId/sync', authenticate, ctrl.syncUserAnalytics);
 
+// Get posts from linked accounts
+router.get('/linked-accounts/posts', authenticate, ctrl.getLinkedAccountPosts);
+
 // Get top performing posts
 router.get('/top', authenticate, ctrl.getTopPerforming);
 

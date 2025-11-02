@@ -217,6 +217,194 @@ const syncUserAnalytics = asyncHandler(async (req, res) => {
   return res.json({ success: true, data: { synced: true } });
 });
 
+// Get posts from linked accounts (for Recent Posts display)
+const getLinkedAccountPosts = asyncHandler(async (req, res) => {
+  const userId = req.userId || req.params.userId;
+  const { limit = 10, platform } = req.query;
+
+  if (!userId) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      message: 'User ID is required'
+    });
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  const posts = [];
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - 30); // Last 30 days
+
+  // Twitter
+  if ((!platform || platform === 'twitter') && user.socialAccounts?.twitter?.username && TwitterService?.getUserTweets) {
+    try {
+      const tweets = await TwitterService.getUserTweets(
+        user.socialAccounts.twitter.username, 
+        { max_results: Math.min(parseInt(limit) || 10, 50) }
+      );
+      for (const t of tweets || []) {
+        const createdAt = new Date(t.created_at || t.createdAt || Date.now());
+        if (createdAt < sinceDate) continue;
+        posts.push({
+          _id: t.id?.toString() || `twitter_${Date.now()}_${Math.random()}`,
+          platform: 'twitter',
+          title: null,
+          content: t.text || '',
+          status: 'published',
+          analytics: {
+            likes: t.public_metrics?.like_count || 0,
+            comments: t.public_metrics?.reply_count || 0,
+            shares: t.public_metrics?.retweet_count || 0,
+            views: t.public_metrics?.impression_count || 0
+          },
+          publishing: {
+            published_at: createdAt.toISOString(),
+            platform_post_id: t.id?.toString(),
+            platform_url: `https://twitter.com/${user.socialAccounts.twitter.username}/status/${t.id}`
+          },
+          createdAt: createdAt.toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching Twitter posts:', err.message);
+    }
+  }
+
+  // LinkedIn
+  if ((!platform || platform === 'linkedin') && user.socialAccounts?.linkedin?.username && LinkedInService?.getUserPosts) {
+    try {
+      const linkedinPosts = await LinkedInService.getUserPosts(
+        user.socialAccounts.linkedin.username, 
+        { limit: Math.min(parseInt(limit) || 10, 50) }
+      );
+      for (const p of linkedinPosts || []) {
+        const createdAt = new Date(p.created_at || p.createdAt || Date.now());
+        if (createdAt < sinceDate) continue;
+        posts.push({
+          _id: (p.id || p.urn || '').toString() || `linkedin_${Date.now()}_${Math.random()}`,
+          platform: 'linkedin',
+          title: null,
+          content: p.text || p.caption || '',
+          status: 'published',
+          analytics: {
+            likes: p.like_count || p.likes || 0,
+            comments: p.comment_count || p.comments || 0,
+            shares: p.share_count || p.shares || 0,
+            views: p.impressions || 0
+          },
+          publishing: {
+            published_at: createdAt.toISOString(),
+            platform_post_id: (p.id || p.urn || '').toString(),
+            platform_url: p.url || null
+          },
+          createdAt: createdAt.toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching LinkedIn posts:', err.message);
+    }
+  }
+
+  // YouTube
+  if ((!platform || platform === 'youtube') && user.socialAccounts?.youtube?.id && YouTubeService?.getChannelVideos) {
+    try {
+      const videos = await YouTubeService.getChannelVideos(
+        user.socialAccounts.youtube.id, 
+        { maxResults: Math.min(parseInt(limit) || 10, 50) }
+      );
+      for (const v of videos || []) {
+        const published = new Date(v.snippet?.publishedAt || Date.now());
+        if (published < sinceDate) continue;
+        const videoId = v.id?.videoId || v.id;
+        posts.push({
+          _id: videoId || `youtube_${Date.now()}_${Math.random()}`,
+          platform: 'youtube',
+          title: v.snippet?.title || '',
+          content: v.snippet?.description || '',
+          status: 'published',
+          analytics: {
+            views: Number(v.statistics?.viewCount || 0),
+            likes: Number(v.statistics?.likeCount || 0),
+            comments: Number(v.statistics?.commentCount || 0),
+            shares: 0
+          },
+          publishing: {
+            published_at: published.toISOString(),
+            platform_post_id: videoId,
+            platform_url: `https://www.youtube.com/watch?v=${videoId}`
+          },
+          createdAt: published.toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching YouTube videos:', err.message);
+    }
+  }
+
+  // Facebook
+  if ((!platform || platform === 'facebook') && user.socialAccounts?.facebook?.username && FacebookService?.getPagePosts) {
+    try {
+      const fbPosts = await FacebookService.getPagePosts(
+        user.socialAccounts.facebook.username, 
+        { limit: Math.min(parseInt(limit) || 10, 50) }
+      );
+      const postsArray = Array.isArray(fbPosts) ? fbPosts : fbPosts?.posts || [];
+      for (const p of postsArray) {
+        const created = new Date(p.created_time || p.created_at || Date.now());
+        if (created < sinceDate) continue;
+        posts.push({
+          _id: p.id?.toString() || `facebook_${Date.now()}_${Math.random()}`,
+          platform: 'facebook',
+          title: null,
+          content: p.message || p.text || '',
+          status: 'published',
+          analytics: {
+            likes: p.like_count || p.reactions?.summary?.total_count || 0,
+            comments: p.comment_count || p.comments?.summary?.total_count || 0,
+            shares: p.share_count || p.shares?.count || 0,
+            views: 0
+          },
+          publishing: {
+            published_at: created.toISOString(),
+            platform_post_id: p.id?.toString(),
+            platform_url: p.permalink_url || null
+          },
+          createdAt: created.toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching Facebook posts:', err.message);
+    }
+  }
+
+  // Instagram: Not yet implemented - requires Graph API with Business account
+  // if ((!platform || platform === 'instagram') && user.socialAccounts?.instagram?.igAccountId) {
+  //   // TODO: Implement Instagram posts fetching
+  // }
+
+  // Sort by published date (most recent first)
+  posts.sort((a, b) => {
+    const dateA = new Date(a.publishing?.published_at || a.createdAt);
+    const dateB = new Date(b.publishing?.published_at || b.createdAt);
+    return dateB.getTime() - dateA.getTime();
+  });
+
+  // Limit results
+  const limitedPosts = posts.slice(0, parseInt(limit) || 10);
+
+  res.json({
+    success: true,
+    posts: limitedPosts,
+    total: posts.length
+  });
+});
+
 // Get top performing posts
 const getTopPerforming = asyncHandler(async (req, res) => {
   const { limit = 10 } = req.query;
@@ -312,7 +500,8 @@ module.exports = {
   getPlatformStats,
   syncUserAnalytics,
   getPostsTimeSeries,
-  getSuccessFailure
+  getSuccessFailure,
+  getLinkedAccountPosts
 };
 
 

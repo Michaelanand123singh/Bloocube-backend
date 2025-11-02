@@ -182,7 +182,7 @@ const createRateLimit = (options = {}) => {
  */
 const generalLimiter = createRateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 100 : 500, // Higher limit in development
   message: 'Too many requests from this IP, please try again later',
   standardHeaders: true,
   legacyHeaders: false
@@ -256,6 +256,17 @@ const bidLimiter = createRateLimit({
 });
 
 /**
+ * Creator API rate limiter (more lenient for authenticated creators)
+ */
+const creatorLimiter = createRateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'production' ? 200 : 1000, // Higher limit for creators
+  message: 'Too many requests, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+/**
  * User-specific rate limiter
  */
 const userSpecificLimiter = (options = {}) => {
@@ -295,7 +306,8 @@ const dynamicLimiter = (req, res, next) => {
   } else if (req.user?.role === 'brand') {
     return campaignLimiter(req, res, next);
   } else if (req.user?.role === 'creator') {
-    return bidLimiter(req, res, next);
+    // Use creatorLimiter for general API requests, bidLimiter only for bid-specific endpoints
+    return creatorLimiter(req, res, next);
   } else {
     return generalLimiter(req, res, next);
   }
@@ -310,6 +322,7 @@ module.exports = {
   aiServiceLimiter,
   campaignLimiter,
   bidLimiter,
+  creatorLimiter,
   userSpecificLimiter,
   adminLimiter,
   dynamicLimiter
