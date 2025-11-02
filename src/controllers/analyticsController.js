@@ -22,17 +22,49 @@ const createAnalytics = asyncHandler(async (req, res) => {
 // Get analytics by user
 const getUserAnalytics = asyncHandler(async (req, res) => {
   const { userId } = req.params;
-  const { platform } = req.query;
+  const { platform, days } = req.query;
+  
+  // Calculate date filter if days parameter is provided
+  let dateFilter = null;
+  if (days) {
+    const daysNum = parseInt(days);
+    if (daysNum > 0) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysNum);
+      dateFilter = cutoffDate;
+    }
+  }
+
   const records = await Analytics.findByUser(userId, platform);
 
-  if (records && records.length > 0) {
-    return res.json({ success: true, data: { analytics: records } });
+  // Filter by date if needed and if we have records
+  let filteredRecords = records || [];
+  if (records && records.length > 0 && dateFilter) {
+    filteredRecords = records.filter(record => {
+      const postedAt = record.timing?.posted_at || record.captured_at || record.createdAt;
+      if (!postedAt) return false;
+      const postDate = new Date(postedAt);
+      return postDate >= dateFilter;
+    });
+  }
+
+  if (filteredRecords && filteredRecords.length > 0) {
+    return res.json({ success: true, data: { analytics: filteredRecords } });
   }
 
   // Fallback: synthesize analytics from user's published posts
   const postQuery = { author: userId, status: 'published' };
   if (platform) {
     postQuery.platform = platform;
+  }
+  
+  // Add date filter to post query if provided
+  // Match posts where either published_at or createdAt is within the date range
+  if (dateFilter) {
+    postQuery.$or = [
+      { 'publishing.published_at': { $gte: dateFilter } },
+      { createdAt: { $gte: dateFilter } }
+    ];
   }
 
   const posts = await Post.find(postQuery).sort({ 'publishing.published_at': -1 }).limit(200);
@@ -45,7 +77,8 @@ const getUserAnalytics = asyncHandler(async (req, res) => {
     content: {
       caption: typeof p.content === 'object' ? (p.content.caption || p.title || '') : (p.title || ''),
       media_type: Array.isArray(p.media) && p.media.length > 0 ? p.media[0].type : undefined,
-      media_count: Array.isArray(p.media) ? p.media.length : undefined
+      media_count: Array.isArray(p.media) ? p.media.length : undefined,
+      title: typeof p.content === 'object' ? p.title : p.title
     },
     metrics: {
       views: p.analytics?.views || 0,
