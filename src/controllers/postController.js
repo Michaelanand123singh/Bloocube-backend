@@ -17,6 +17,7 @@ const twitterService = require('../services/social/twitter');
 const youtubeService = require('../services/social/youtube');
 const linkedinService = require('../services/social/linkedin');
 const instagramService = require('../services/social/instagram');
+const engagementService = require('../services/engagementService');
 
 class PostController {
 
@@ -1356,10 +1357,23 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Update post with platform post ID
+      // Generate platform URL
+      const platformPostId = platformResult.tweet_id || platformResult.thread_id || platformResult.video_id || platformResult.ig_media_id || platformResult.id || platformResult.post_id || null;
+      let platformUrl = platformResult.url || null;
+      
+      // If URL not provided, generate it
+      if (!platformUrl && platformPostId) {
+        const username = user.socialAccounts?.[post.platform]?.username || 
+                        user.socialAccounts?.[post.platform]?.customUrl ||
+                        user.socialAccounts?.[post.platform]?.id;
+        platformUrl = engagementService.generatePlatformURL(post.platform, platformPostId, username);
+      }
+
+      // Update post with platform post ID and URL
       post.publishing = {
         published_at: new Date(),
-        platform_post_id: platformResult.tweet_id || platformResult.thread_id || platformResult.video_id || null,
+        platform_post_id: platformPostId,
+        platform_url: platformUrl,
         platform_data: platformResult
       };
       await post.save();
@@ -1578,11 +1592,24 @@ async postToTwitter(post, user) {
         });
       }
 
-      // Update post status to published with platform post ID
+      // Generate platform URL
+      const platformPostId = platformResult.tweet_id || platformResult.thread_id || platformResult.video_id || platformResult.ig_media_id || platformResult.id || platformResult.post_id || null;
+      let platformUrl = platformResult.url || null;
+      
+      // If URL not provided, generate it
+      if (!platformUrl && platformPostId) {
+        const username = user.socialAccounts?.[post.platform]?.username || 
+                        user.socialAccounts?.[post.platform]?.customUrl ||
+                        user.socialAccounts?.[post.platform]?.id;
+        platformUrl = engagementService.generatePlatformURL(post.platform, platformPostId, username);
+      }
+
+      // Update post status to published with platform post ID and URL
       post.status = 'published';
       post.publishing = {
         published_at: new Date(),
-        platform_post_id: platformResult.tweet_id || platformResult.thread_id || platformResult.video_id || null,
+        platform_post_id: platformPostId,
+        platform_url: platformUrl,
         platform_data: platformResult
       };
 
