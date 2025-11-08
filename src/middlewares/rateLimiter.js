@@ -224,33 +224,39 @@ const uploadLimiter = createRateLimit({
 
 /**
  * AI service rate limiter
+ * Admin users are exempt from this limiter
  */
 const aiServiceLimiter = createRateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 50, // limit each IP to 50 AI requests per hour
   message: 'Too many AI service requests, please try again later',
+  skip: (req) => req.user?.role === 'admin', // Skip rate limiting for admin users
   standardHeaders: true,
   legacyHeaders: false
 });
 
 /**
  * Campaign creation rate limiter
+ * Admin users are exempt from this limiter
  */
 const campaignLimiter = createRateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 10, // limit each IP to 10 campaigns per day
   message: 'Campaign creation limit reached, please try again tomorrow',
+  skip: (req) => req.user?.role === 'admin', // Skip rate limiting for admin users
   standardHeaders: true,
   legacyHeaders: false
 });
 
 /**
  * Bid submission rate limiter
+ * Admin users are exempt from this limiter
  */
 const bidLimiter = createRateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 20, // limit each IP to 20 bids per hour
   message: 'Too many bid submissions, please try again later',
+  skip: (req) => req.user?.role === 'admin', // Skip rate limiting for admin users
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -299,11 +305,24 @@ const adminLimiter = createRateLimit({
 
 /**
  * Dynamic rate limiter based on user role
+ * Admin users and admin routes are completely exempt from rate limiting
  */
 const dynamicLimiter = (req, res, next) => {
+  // Completely bypass rate limiting for admin users
   if (req.user?.role === 'admin') {
-    return adminLimiter(req, res, next);
-  } else if (req.user?.role === 'brand') {
+    return next();
+  }
+  
+  // Also bypass rate limiting for admin routes (even if user is not yet authenticated)
+  // This handles cases where rate limiting might be checked before authentication
+  // Check both path and originalUrl to handle all routing scenarios
+  const path = req.path || req.originalUrl || '';
+  if (path.includes('/api/admin')) {
+    return next();
+  }
+  
+  // Apply rate limiting based on role for non-admin users
+  if (req.user?.role === 'brand') {
     return campaignLimiter(req, res, next);
   } else if (req.user?.role === 'creator') {
     // Use creatorLimiter for general API requests, bidLimiter only for bid-specific endpoints

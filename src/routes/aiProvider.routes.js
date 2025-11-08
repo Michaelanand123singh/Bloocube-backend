@@ -1,11 +1,11 @@
 // src/routes/aiProvider.routes.js
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middlewares/auth');
-const { adminLimiter } = require('../middlewares/rateLimiter');
 const ctrl = require('../controllers/aiProviderController');
 
 // Protect all AI provider management routes - Super Admin only
-router.use(authenticate, authorize('admin'), adminLimiter);
+// Rate limiting is disabled for admin routes (handled globally in dynamicLimiter)
+router.use(authenticate, authorize('admin'));
 
 // AI Provider Status and Management
 router.get('/status', ctrl.getProvidersStatus);
