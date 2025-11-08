@@ -126,8 +126,8 @@ class EngagementController {
     const total = await Post.countDocuments(query);
 
     // Enrich posts with platform URLs and metrics
-    // Use Promise.allSettled to prevent one failed metric fetch from blocking others
-    const enrichedPostsPromises = posts.map(async (post) => {
+    // OPTIMIZATION: Batch fetch metrics by platform to avoid N+1 query problem
+    const enrichedPosts = posts.map((post) => {
         let platformPostId = post.publishing?.platform_post_id;
         let platformUrl = post.publishing?.platform_url;
 
@@ -163,35 +163,8 @@ class EngagementController {
           );
         }
 
-        // Get latest metrics if available (only for platforms that support it and if requested)
-        // Skip metrics for LinkedIn as it doesn't support it yet
-        let metrics = null;
-        if (shouldFetchMetrics && platformPostId && post.platform !== 'linkedin') {
-          const platformSupport = engagementService.getPlatformSupport(post.platform);
-          if (platformSupport.supportsMetrics) {
-            try {
-              // Add timeout to prevent hanging
-              const metricsPromise = engagementService.getPlatformMetrics(
-                user,
-                post.platform,
-                platformPostId
-              );
-              const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Metrics fetch timeout')), 5000)
-              );
-              
-              const metricsResult = await Promise.race([metricsPromise, timeoutPromise]);
-              if (metricsResult.success && metricsResult.metrics) {
-                metrics = metricsResult.metrics;
-              }
-            } catch (error) {
-              console.error(`Failed to fetch metrics for ${post.platform} post ${platformPostId}:`, error.message);
-              // Don't fail the whole request if metrics fail - use stored analytics
-              metrics = null;
-            }
-          }
-        }
-
+        // Return post with stored analytics for now
+        // Metrics will be fetched in batch below if requested
         return {
           _id: post._id,
           title: post.title,
@@ -201,7 +174,7 @@ class EngagementController {
           platform_post_id: platformPostId,
           platform_url: platformUrl,
           published_at: post.publishing?.published_at,
-          metrics: metrics || post.analytics || {
+          metrics: post.analytics || {
             views: 0,
             likes: 0,
             comments: 0,
@@ -211,34 +184,76 @@ class EngagementController {
         };
     });
 
-    // Use Promise.allSettled to handle errors gracefully and prevent slow API calls from blocking
-    const enrichedPostsResults = await Promise.allSettled(enrichedPostsPromises);
-    const enrichedPosts = enrichedPostsResults.map((result, index) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
-      } else {
-        // If enrichment failed, return basic post info
-        console.error(`Failed to enrich post ${posts[index]._id}:`, result.reason);
-        const post = posts[index];
-        return {
-          _id: post._id,
-          title: post.title,
-          content: post.content,
-          platform: post.platform,
-          post_type: post.post_type,
-          platform_post_id: post.publishing?.platform_post_id || null,
-          platform_url: post.publishing?.platform_url || null,
-          published_at: post.publishing?.published_at,
-          metrics: post.analytics || {
-            views: 0,
-            likes: 0,
-            comments: 0,
-            shares: 0
-          },
-          createdAt: post.createdAt
-        };
-      }
-    });
+    // Batch fetch metrics by platform if requested (OPTIMIZATION: prevents N+1 queries)
+    if (shouldFetchMetrics) {
+      // Group posts by platform
+      const postsByPlatform = {};
+      enrichedPosts.forEach((post, index) => {
+        if (post.platform_post_id && post.platform !== 'linkedin') {
+          const platform = post.platform;
+          if (!postsByPlatform[platform]) {
+            postsByPlatform[platform] = [];
+          }
+          postsByPlatform[platform].push({ post, index });
+        }
+      });
+
+      // Fetch metrics for each platform in parallel (one API call per platform instead of per post)
+      const metricsPromises = Object.entries(postsByPlatform).map(async ([platform, postList]) => {
+        try {
+          const platformSupport = engagementService.getPlatformSupport(platform);
+          if (!platformSupport.supportsMetrics) {
+            return { platform, metrics: null };
+          }
+
+          // Fetch platform metrics (this gets all posts for the platform at once)
+          const platformMetricsResult = await Promise.race([
+            engagementService.getPlatformMetrics(user, platform, null),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Platform metrics fetch timeout')), 10000)
+            )
+          ]);
+
+          if (platformMetricsResult.success && platformMetricsResult.posts) {
+            // Create a map of postId -> metrics for quick lookup
+            const metricsMap = {};
+            platformMetricsResult.posts.forEach(p => {
+              metricsMap[p.postId] = {
+                views: p.views || 0,
+                likes: p.likes || 0,
+                comments: p.comments || 0,
+                shares: p.shares || 0
+              };
+            });
+
+            return { platform, metrics: metricsMap };
+          }
+        } catch (error) {
+          console.error(`Failed to batch fetch metrics for ${platform}:`, error.message);
+        }
+        return { platform, metrics: null };
+      });
+
+      // Wait for all platform metrics to be fetched
+      const metricsResults = await Promise.allSettled(metricsPromises);
+      
+      // Update enriched posts with fetched metrics
+      metricsResults.forEach((result) => {
+        if (result.status === 'fulfilled' && result.value.metrics) {
+          const { platform, metrics } = result.value;
+          const postList = postsByPlatform[platform];
+          if (postList) {
+            postList.forEach(({ post, index }) => {
+              if (metrics[post.platform_post_id]) {
+                enrichedPosts[index].metrics = metrics[post.platform_post_id];
+              }
+            });
+          }
+        }
+      });
+    }
+
+    // enrichedPosts is already populated above with batch-fetched metrics
 
     return res.status(HTTP_STATUS.OK).json({
       success: true,

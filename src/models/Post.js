@@ -171,5 +171,13 @@ PostSchema.statics.findReadyForPublishing = function() {
   }).populate('author', 'username email socialAccounts');
 };
 
+// Performance indexes for common query patterns
+// These indexes significantly speed up queries for published posts, filtering by author/platform/status
+PostSchema.index({ author: 1, status: 1, 'publishing.published_at': -1 });
+PostSchema.index({ author: 1, status: 1, platform: 1, 'publishing.published_at': -1 });
+PostSchema.index({ author: 1, 'publishing.published_at': -1 });
+PostSchema.index({ status: 1, 'publishing.published_at': -1 });
+PostSchema.index({ platform: 1, status: 1, 'publishing.published_at': -1 });
+PostSchema.index({ 'publishing.platform_post_id': 1 });
 
 module.exports = mongoose.model('Post', PostSchema);

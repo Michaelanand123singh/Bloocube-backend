@@ -803,85 +803,172 @@ class EngagementService {
             posts: 0
           };
 
-          // Fetch metrics for each post from database
-          // Try each page's access token to find the post
-          for (const dbPost of dbPosts) {
-            const fbPostId = dbPost.publishing?.platform_post_id;
-            if (!fbPostId) continue;
+          // OPTIMIZATION: Batch fetch metrics using Facebook batch API to avoid sequential calls
+          // Group posts by page (posts are usually on the same page)
+          const postIds = dbPosts.map(p => p.publishing?.platform_post_id).filter(Boolean);
+          
+          // Try to fetch posts in batches (Facebook batch API allows up to 50 requests per batch)
+          const BATCH_SIZE = 20; // Conservative batch size to avoid rate limits
+          const batches = [];
+          for (let i = 0; i < postIds.length; i += BATCH_SIZE) {
+            batches.push(postIds.slice(i, i + BATCH_SIZE));
+          }
 
-            let postFound = false;
-            for (const page of allPages) {
-              const pageAccessToken = page.access_token || accessToken;
+          // Process batches in parallel for each page
+          const batchPromises = allPages.map(async (page) => {
+            const pageAccessToken = page.access_token || accessToken;
+            const pageResults = [];
+
+            for (const batch of batches) {
               try {
-                const postResponse = await axios.get(`${baseURL}/${fbPostId}`, {
+                // Use Facebook batch API to fetch multiple posts at once
+                const batchRequests = batch.map(postId => ({
+                  method: 'GET',
+                  relative_url: `${postId}?fields=id,message,created_time,shares,reactions.summary(true),comments.summary(true),permalink_url`
+                }));
+
+                const batchResponse = await axios.post(`${baseURL}`, null, {
                   params: {
-                    fields: 'id,message,created_time,shares,reactions.summary(true),comments.summary(true),permalink_url',
+                    batch: JSON.stringify(batchRequests),
                     access_token: pageAccessToken
                   }
                 });
 
-                const reactions = postResponse.data.reactions?.summary || {};
-                const comments = postResponse.data.comments?.summary || {};
-                const shares = postResponse.data.shares || {};
-
-                const likes = parseInt(reactions.total_count || 0);
-                const commentsCount = parseInt(comments.total_count || 0);
-                const sharesCount = parseInt(shares.count || 0);
-
-                // Try to get views via insights API
-                let views = 0;
-                try {
-                  const insightsResponse = await axios.get(`${baseURL}/${fbPostId}/insights`, {
-                    params: {
-                      metric: 'post_impressions',
-                      access_token: pageAccessToken
-                    }
-                  });
-                  const insights = insightsResponse.data?.data || [];
-                  if (insights.length > 0 && insights[0].values && insights[0].values.length > 0) {
-                    views = parseInt(insights[0].values[0].value || 0);
-                  }
-                } catch (insightsError) {
-                  // Views not available, skip
-                }
-
-                totalMetrics.likes += likes;
-                totalMetrics.comments += commentsCount;
-                totalMetrics.shares += sharesCount;
-                totalMetrics.views += views;
-                totalMetrics.posts += 1;
-
-                postsWithMetrics.push({
-                  postId: fbPostId,
-                  likes: likes,
-                  comments: commentsCount,
-                  shares: sharesCount,
-                  views: views,
-                  url: postResponse.data.permalink_url || `https://www.facebook.com/${fbPostId}`,
-                  timestamp: postResponse.data.created_time,
-                  page: {
-                    id: page.id,
-                    name: page.name
-                  }
-                });
+                const batchResults = Array.isArray(batchResponse.data) ? batchResponse.data : [];
                 
-                postFound = true;
-                break; // Found the post on this page, move to next post
-              } catch (error) {
-                if (error.response?.status === 404) {
-                  // Post not on this page, try next page
-                  continue;
+                for (let i = 0; i < batchResults.length; i++) {
+                  const result = batchResults[i];
+                  if (result.code === 200) {
+                    try {
+                      const postData = JSON.parse(result.body);
+                      const reactions = postData.reactions?.summary || {};
+                      const comments = postData.comments?.summary || {};
+                      const shares = postData.shares || {};
+
+                      const likes = parseInt(reactions.total_count || 0);
+                      const commentsCount = parseInt(comments.total_count || 0);
+                      const sharesCount = parseInt(shares.count || 0);
+
+                      // Try to get views via insights API (can't batch this, but we'll do it in parallel)
+                      let views = 0;
+                      try {
+                        const insightsResponse = await axios.get(`${baseURL}/${postData.id}/insights`, {
+                          params: {
+                            metric: 'post_impressions',
+                            access_token: pageAccessToken
+                          }
+                        });
+                        const insights = insightsResponse.data?.data || [];
+                        if (insights.length > 0 && insights[0].values && insights[0].values.length > 0) {
+                          views = parseInt(insights[0].values[0].value || 0);
+                        }
+                      } catch (insightsError) {
+                        // Views not available, skip
+                      }
+
+                      pageResults.push({
+                        postId: postData.id,
+                        likes: likes,
+                        comments: commentsCount,
+                        shares: sharesCount,
+                        views: views,
+                        url: postData.permalink_url || `https://www.facebook.com/${postData.id}`,
+                        timestamp: postData.created_time,
+                        page: {
+                          id: page.id,
+                          name: page.name
+                        }
+                      });
+                    } catch (parseError) {
+                      console.error(`Error parsing batch result for post:`, parseError);
+                    }
+                  }
                 }
-                // For other errors, log and try next page
-                console.error(`Error fetching post ${fbPostId} from page ${page.name}:`, error.message);
-                continue;
+              } catch (batchError) {
+                console.error(`Error fetching batch from page ${page.name}:`, batchError.message);
+                // Fallback to individual requests if batch fails
+                for (const postId of batch) {
+                  try {
+                    const postResponse = await axios.get(`${baseURL}/${postId}`, {
+                      params: {
+                        fields: 'id,message,created_time,shares,reactions.summary(true),comments.summary(true),permalink_url',
+                        access_token: pageAccessToken
+                      }
+                    });
+
+                    const postData = postResponse.data;
+                    const reactions = postData.reactions?.summary || {};
+                    const comments = postData.comments?.summary || {};
+                    const shares = postData.shares || {};
+
+                    const likes = parseInt(reactions.total_count || 0);
+                    const commentsCount = parseInt(comments.total_count || 0);
+                    const sharesCount = parseInt(shares.count || 0);
+                    let views = 0;
+
+                    try {
+                      const insightsResponse = await axios.get(`${baseURL}/${postId}/insights`, {
+                        params: {
+                          metric: 'post_impressions',
+                          access_token: pageAccessToken
+                        }
+                      });
+                      const insights = insightsResponse.data?.data || [];
+                      if (insights.length > 0 && insights[0].values && insights[0].values.length > 0) {
+                        views = parseInt(insights[0].values[0].value || 0);
+                      }
+                    } catch (insightsError) {
+                      // Views not available
+                    }
+
+                    pageResults.push({
+                      postId: postData.id,
+                      likes: likes,
+                      comments: commentsCount,
+                      shares: sharesCount,
+                      views: views,
+                      url: postData.permalink_url || `https://www.facebook.com/${postData.id}`,
+                      timestamp: postData.created_time,
+                      page: {
+                        id: page.id,
+                        name: page.name
+                      }
+                    });
+                  } catch (error) {
+                    // Skip this post
+                    continue;
+                  }
+                }
               }
             }
-            
-            if (!postFound) {
-              console.warn(`Post ${fbPostId} not found on any page`);
+
+            return pageResults;
+          });
+
+          // Wait for all pages to complete
+          const allPageResults = await Promise.allSettled(batchPromises);
+          
+          // Combine results from all pages, avoiding duplicates
+          const postMetricsMap = new Map();
+          allPageResults.forEach((result) => {
+            if (result.status === 'fulfilled') {
+              result.value.forEach(postMetrics => {
+                if (!postMetricsMap.has(postMetrics.postId)) {
+                  postMetricsMap.set(postMetrics.postId, postMetrics);
+                }
+              });
             }
-          }
+          });
+
+          // Convert map to array and update totals
+          postsWithMetrics.push(...Array.from(postMetricsMap.values()));
+          postsWithMetrics.forEach(post => {
+            totalMetrics.likes += post.likes;
+            totalMetrics.comments += post.comments;
+            totalMetrics.shares += post.shares;
+            totalMetrics.views += post.views;
+            totalMetrics.posts += 1;
+          });
 
           // Get page info for engagement calculation (aggregate across all pages)
           let totalFollowers = 0;
