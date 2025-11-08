@@ -7,6 +7,7 @@ const ctrl = require('../controllers/aiController');
 router.post('/competitor-analysis', authenticate, aiServiceLimiter, ctrl.competitorAnalysis);
 router.post('/suggestions', authenticate, aiServiceLimiter, ctrl.suggestions);
 router.post('/matchmaking', authenticate, aiServiceLimiter, ctrl.matchmaking);
+router.post('/score', authenticate, aiServiceLimiter, ctrl.scoreContent);
 
 module.exports = router;
 

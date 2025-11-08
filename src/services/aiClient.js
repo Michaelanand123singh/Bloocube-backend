@@ -96,6 +96,9 @@ module.exports = {
   // Health Check
   healthCheck: () => handle('get', '/health', null),
   
+  // Content Scoring
+  scoreContent: (payload) => handle('post', '/ai/score/', payload),
+  
   // AI Provider Management (Super Admin)
   getProvidersStatus: () => handle('get', '/ai/providers/status', null),
   switchProvider: (payload) => handle('post', '/ai/providers/switch', payload),

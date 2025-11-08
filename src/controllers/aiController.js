@@ -55,6 +55,16 @@ const matchmaking = asyncHandler(async (req, res) => {
   res.status(HTTP_STATUS.CREATED).json({ success: true, data: { result: record } });
 });
 
-module.exports = { competitorAnalysis, suggestions, matchmaking };
+const scoreContent = asyncHandler(async (req, res) => {
+  const payload = req.body;
+  const aiResponse = await aiClient.scoreContent(payload);
+  
+  res.status(HTTP_STATUS.OK).json({ 
+    success: true, 
+    data: aiResponse 
+  });
+});
+
+module.exports = { competitorAnalysis, suggestions, matchmaking, scoreContent };
 
 
