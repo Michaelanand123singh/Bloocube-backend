@@ -156,22 +156,39 @@ class InstagramService {
     try {
       console.log('📸 Instagram posting details:', {
         igAccountId,
-        hasAccessToken:!!accessToken,
-        mediaUrl: contentData.mediaUrl,
+        hasAccessToken: !!accessToken,
+        // Log the keys properly to debug
+        hasImage: !!contentData.image_url,
+        hasVideo: !!contentData.video_url,
         caption: contentData.caption?.substring(0, 50) + '...'
       });
 
+      // 1. Validate Account
       const validation = await this.validateInstagramAccount(accessToken, igAccountId);
       if (!validation.valid) {
         return { success: false, error: validation.error, raw: validation.raw };
       }
 
-      console.log('📸 Creating media container...');
-      const containerResponse = await axios.post(`${this.baseURL}/${igAccountId}/media`, {
-        image_url: contentData.mediaUrl,
+      // 2. Prepare Payload
+      // ✅ FIX: Dynamically construct payload based on image vs video
+      const mediaPayload = {
         caption: contentData.caption,
         access_token: accessToken,
-      });
+      };
+
+      if (contentData.image_url) {
+        mediaPayload.image_url = contentData.image_url;
+      } else if (contentData.video_url) {
+        mediaPayload.video_url = contentData.video_url;
+        mediaPayload.media_type = 'VIDEO'; // Required explicitly for some video types
+      } else {
+        return { success: false, error: 'No image_url or video_url provided for Instagram post.' };
+      }
+
+      console.log('📸 Creating media container...', mediaPayload); // Debug log
+
+      // 3. Create Container
+      const containerResponse = await axios.post(`${this.baseURL}/${igAccountId}/media`, mediaPayload);
 
       if (!containerResponse.data?.id) {
         return { success: false, error: 'Failed to create media container', raw: containerResponse.data };
@@ -180,6 +197,7 @@ class InstagramService {
       const containerId = containerResponse.data.id;
       console.log('✅ Media container created:', containerId);
 
+      // 4. Publish Container
       console.log('📸 Publishing container...');
       const publishResponse = await axios.post(`${this.baseURL}/${igAccountId}/media_publish`, {
         creation_id: containerId,
@@ -192,21 +210,19 @@ class InstagramService {
 
       console.log('✅ Instagram post published:', publishResponse.data.id);
       return { success: true, id: publishResponse.data.id };
+
     } catch (error) {
       const apiError = error.response?.data?.error;
       console.error('❌ Instagram posting error:', {
         message: apiError?.message || error.message,
         code: apiError?.code,
-        type: apiError?.type,
-        fbtrace_id: apiError?.fbtrace_id
+        type: apiError?.type
       });
 
       return {
         success: false,
         error: apiError?.message || 'Failed to post content',
-        raw: apiError,
-        errorCode: apiError?.code,
-        errorType: apiError?.type
+        errorCode: apiError?.code
       };
     }
   }
@@ -255,28 +271,24 @@ class InstagramService {
 
   async validateInstagramAccount(accessToken, igAccountId) {
     try {
-      console.log('🔍 Validating Instagram account:', { igAccountId, hasToken:!!accessToken });
+      console.log('🔍 Validating Instagram account:', { igAccountId, hasToken: !!accessToken });
 
+      // ✅ FIX: Removed 'account_type' from fields list to prevent (#100) error
       const accountResponse = await axios.get(`${this.baseURL}/${igAccountId}`, {
         params: {
-          fields: 'id,username,name,profile_picture_url,account_type,media_count',
+          fields: 'id,username,name,profile_picture_url,media_count', 
           access_token: accessToken,
         },
       });
 
       console.log('✅ Instagram account validated:', {
         id: accountResponse.data.id,
-        username: accountResponse.data.username,
-        accountType: accountResponse.data.account_type
+        username: accountResponse.data.username
       });
 
-      if (accountResponse.data.account_type!== 'BUSINESS' && accountResponse.data.account_type!== 'CREATOR') {
-        return {
-          valid: false,
-          error: 'Instagram account must be a Business or Creator account to post content.',
-          raw: { accountType: accountResponse.data.account_type }
-        };
-      }
+      // ✅ FIX: Removed the specific check for 'BUSINESS'/'CREATOR' types 
+      // because strictly fetching 'account_type' causes API errors on some nodes.
+      // If the API call above succeeds, the account is valid and accessible.
 
       return {
         valid: true,

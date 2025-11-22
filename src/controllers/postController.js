@@ -366,15 +366,25 @@ async postToTwitter(post, user) {
         };
       }
 
-      if (!post.media || post.media.length === 0) {
-        return { success: false, error: 'An image or video file is required for all Instagram posts.' };
+      let mediaItems = Array.isArray(post.media) ? post.media : [post.media];
+      if (mediaItems.length === 0) return { success: false, error: 'Image required.' };
+      
+      const mediaFile = mediaItems[0];
+      
+      // ✅ FIX: Robust URL resolution
+      // If mediaFile.url exists, use it. If not, construct it from filename.
+      let mediaUrl = this.getAbsoluteMediaUrl(mediaFile.url);
+      
+      if (!mediaUrl && mediaFile.filename) {
+        // Fallback: Assume it is in the standard uploads folder
+        // Ensure config.BASE_URL is set in your .env (e.g., http://localhost:5000)
+        const baseUrl = config.BASE_URL || 'http://localhost:5000';
+        mediaUrl = `${baseUrl}/uploads/${mediaFile.filename}`;
+        console.log(`⚠️ Media URL missing. Constructed fallback: ${mediaUrl}`);
       }
 
-      const mediaFile = post.media; // Assumes single media posts for now
-      const mediaUrl = this.getAbsoluteMediaUrl(mediaFile.url);
-
       if (!mediaUrl) {
-        return { success: false, error: 'Could not determine a public URL for the media file. Ensure it was uploaded correctly.' };
+        return { success: false, error: 'Could not determine public URL for media file.' };
       }
 
       const caption = post.content?.caption || post.title || '';
