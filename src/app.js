@@ -18,6 +18,7 @@ const profileRoutes = require("./routes/profile.routes");
 const campaignRoutes = require("./routes/campaign.routes");
 const bidRoutes = require("./routes/bid.routes");
 const analyticsRoutes = require("./routes/analytics.routes");
+const adminAuthRoutes = require("./routes/adminAuth.routes");
 const adminRoutes = require("./routes/admin.routes");
 const aiRoutes = require("./routes/ai.routes");
 const twitterRoutes = require("./routes/twitter.routes");
@@ -152,6 +153,8 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/bids", bidRoutes);
 app.use("/api/analytics", analyticsRoutes);
+// Admin auth routes (must be before admin routes, no rate limiting - handled by dynamicLimiter bypass)
+app.use("/api/admin/auth", adminAuthRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/twitter", twitterRoutes);

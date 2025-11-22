@@ -291,17 +291,6 @@ const userSpecificLimiter = (options = {}) => {
   });
 };
 
-/**
- * Admin rate limiter (more lenient)
- */
-const adminLimiter = createRateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // higher limit for admin users
-  message: 'Admin rate limit exceeded',
-  skip: (req) => req.user?.role !== 'admin',
-  standardHeaders: true,
-  legacyHeaders: false
-});
 
 /**
  * Dynamic rate limiter based on user role
@@ -343,6 +332,5 @@ module.exports = {
   bidLimiter,
   creatorLimiter,
   userSpecificLimiter,
-  adminLimiter,
   dynamicLimiter
 };
